@@ -1,44 +1,14 @@
-// Package appdir decides where magpie keeps its own files: the one place
-// every other package asks (#508).
+// Package appdir owns the paths for magpie's files.
+// Magpie always keeps its state beside the executable in data, caches in
+// data/cache, logs in data/logs and the Windows webview in data/webview2.
+// No marker, existing folder or installed configuration selects a mode.
+// For a Mac app, data is beside the .app bundle; for an AppImage, it is
+// beside the AppImage file. Symlinks are followed. The path is resolved
+// once at startup so moving the executable aside during an update cannot
+// move the running process's data.
 //
-// Installed, that is ~/.config/magpie ($XDG_CONFIG_HOME/magpie) for what
-// magpie keeps and ~/.cache/magpie ($XDG_CACHE_HOME/magpie) for what it
-// can fetch again, as it always was. Portable, when a folder named "data"
-// (or a file named ".portable") sits beside magpie, everything magpie
-// keeps goes into that data folder, its caches into data/cache and the
-// Windows webview's profile into data/webview2 (no Start-menu shortcut or
-// App Paths entry is made either), and
-// nothing of magpie's own is written to the user's profile, the way VS
-// Code's portable mode works. "Beside magpie" is the folder holding the
-// executable, with links followed; for a Mac app it is the folder holding
-// Magpie.app (a file put inside the bundle would break its signature), and
-// for an AppImage the folder holding the .AppImage file, not the folder it
-// is mounted at while it runs.
-//
-// What isn't magpie's own stays where its owner reads it: the agents'
-// configs (~/.claude, ~/.codex…), the sign-ins they keep in the system
-// keychain, the folders the OS reads for autostart and link handling, and
-// temporary folders.
-//
-// A data folder in a folder every app or download shares (/Applications on
-// a Mac; the home folder, Downloads, Desktop and Documents everywhere) is
-// taken for magpie's own only when it already holds magpie's files and the
-// installed folder doesn't, or with a ".portable" marker: a "data" folder
-// there is as likely another app's or the user's own. Taking one showed a
-// user who had never asked for portable an empty magpie (#989), and wrote
-// magpie's files into a Downloads\data folder a Windows user's archiver
-// empties, so a provider just added was gone (tangle778 on X). Where the
-// system keeps Downloads, Desktop or Documents off home (moved to D:\ or
-// OneDrive on Windows, ~/下载 on Linux) only a data folder holding none of
-// magpie's files is passed over: before v0.1.2648 those folders weren't
-// judged at all, so a data folder there holding magpie's files is one this
-// user's magpie has been keeping its files in, and an update never moves
-// them back to an installed folder from long ago (jwaitq on Discord).
-//
-// The decision is made once, from the executable as it was when magpie
-// started: an update moving the running copy aside (into .magpie-update on
-// a Mac, to magpie.exe.old on Windows) leaves it running from somewhere
-// else, and its files must not move with it.
+// Files owned by other programs, system keychains, OS autostart and link
+// registrations, and temporary files retain their owners' locations.
 package appdir
 
 import (
@@ -50,40 +20,29 @@ import (
 	"sync"
 )
 
-const (
-	// DataName is the folder beside magpie that makes it portable and
-	// holds its files.
-	DataName = "data"
-	// MarkerName is a file beside magpie that makes it portable too, its
-	// files then going into a data folder made beside it.
-	MarkerName = ".portable"
-)
+// DataName is the folder beside magpie that holds its state.
+const DataName = "data"
 
 var (
 	once     sync.Once
-	portable string // the data folder, or "" when installed
+	portable string // empty only with the explicit test override
 )
 
-// Portable is the data folder magpie keeps everything in, or "" when it
-// isn't portable.
+// Portable is the data folder magpie keeps everything in.
 func Portable() string {
 	once.Do(func() {
 		exe, err := os.Executable()
 		if err != nil {
-			return
+			log.Panicf("appdir: finding the executable for portable data: %v", err)
 		}
 		portable = Resolve(exe)
-		if portable == "" {
-			if data := Passed(exe); data != "" {
-				log.Printf("appdir: %s is beside magpie but not taken for its portable data: it is in a shared folder and %s has magpie's files too; a .portable file beside magpie makes it portable", data, installed())
-			}
-		}
 	})
 	return portable
 }
 
-// UseExecutable decides again as if magpie ran from exe ("" for an
-// installed magpie, whatever runs): for tests.
+// UseExecutable overrides the executable for tests. An empty path selects
+// legacy profile paths explicitly, so sandboxed tests of existing data
+// formats can keep their own HOME/XDG fixtures. Startup never selects them.
 func UseExecutable(exe string) {
 	once.Do(func() {})
 	portable = ""
@@ -92,133 +51,13 @@ func UseExecutable(exe string) {
 	}
 }
 
-// Resolve is the data folder of a magpie run from exe, or "" when it isn't
-// portable.
+// Resolve is the data folder beside exe, whether or not it exists.
+// It never inspects data, marker files or a previous installation.
 func Resolve(exe string) string {
 	if real, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = real
 	}
-	base := Beside(exe)
-	data := filepath.Join(base, DataName)
-	if fi, err := os.Stat(filepath.Join(base, MarkerName)); err == nil && !fi.IsDir() {
-		return absolute(data)
-	}
-	if fi, err := os.Stat(data); err == nil && fi.IsDir() && !shared(base, data) {
-		return absolute(data)
-	}
-	return ""
-}
-
-// Passed is the data folder beside a magpie run from exe that holds
-// magpie's files but that Resolve doesn't take for its own, because it is
-// in a shared folder while the installed folder has magpie's files too, or
-// "". A data folder holding none of them is someone else's and isn't named.
-func Passed(exe string) string {
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
-	}
-	base := Beside(exe)
-	data := filepath.Join(base, DataName)
-	if fi, err := os.Stat(data); err == nil && fi.IsDir() && hasFiles(data) && Resolve(exe) == "" {
-		return absolute(data)
-	}
-	return ""
-}
-
-// shared says whether the data folder in dir can't be taken for magpie's:
-// dir is a folder every app or download shares, where a folder named data
-// is as likely another app's or the user's own, and either data holds none
-// of magpie's files or the installed folder holds them too. One who keeps
-// magpie portable there has its files in data and never ran it installed,
-// and keeps it portable; a ".portable" marker beside it makes it portable
-// whatever is there.
-//
-// A data folder in the place the system keeps a user folder moved off home
-// (movedFolder) is passed over only when it holds none of magpie's files.
-// Releases before v0.1.2648 took any data folder there, so one holding
-// magpie's files is where this magpie has kept them, maybe for months,
-// while an installed folder with files of its own is from before then:
-// judging it as in home\Downloads moved a user back to that old setup on
-// updating (jwaitq on Discord).
-func shared(dir, data string) bool {
-	switch {
-	case sharedFolder(dir):
-		if !hasFiles(data) {
-			return true
-		}
-		in := installed()
-		return in != "" && hasFiles(in)
-	case movedFolder(dir):
-		return !hasFiles(data)
-	}
-	return false
-}
-
-// hasFiles says whether dir holds magpie's own files.
-func hasFiles(dir string) bool {
-	for _, f := range []string{"providers.json", "logins.json", "settings.json"} {
-		if fi, err := os.Stat(filepath.Join(dir, f)); err == nil && !fi.IsDir() {
-			return true
-		}
-	}
-	return false
-}
-
-// sharedFolder says whether dir is a folder every app or download shares:
-// /Applications and ~/Applications on a Mac, and the home folder, its
-// Downloads, Desktop and Documents everywhere, under home. Tests change it.
-var sharedFolder = func(dir string) bool {
-	var dirs []string
-	if runtime.GOOS == "darwin" {
-		dirs = append(dirs, "/Applications")
-	}
-	if h, err := Home(); err == nil {
-		dirs = append(dirs, h)
-		for _, d := range []string{DownloadsFolder, DesktopFolder, DocumentsFolder} {
-			dirs = append(dirs, filepath.Join(h, d))
-		}
-		if runtime.GOOS == "darwin" {
-			dirs = append(dirs, filepath.Join(h, "Applications"))
-		}
-	}
-	return sameAny(dir, dirs)
-}
-
-// movedFolder says whether dir is where the system keeps the user's
-// Downloads, Desktop or Documents (userFolder), moved off home or not.
-var movedFolder = func(dir string) bool {
-	var dirs []string
-	for _, d := range []string{DownloadsFolder, DesktopFolder, DocumentsFolder} {
-		if p := userFolder(d); p != "" {
-			dirs = append(dirs, p)
-		}
-	}
-	return sameAny(dir, dirs)
-}
-
-// userFolder is UserFolder; tests change it.
-var userFolder = UserFolder
-
-func sameAny(dir string, dirs []string) bool {
-	for _, d := range dirs {
-		if strings.EqualFold(filepath.Clean(dir), filepath.Clean(d)) {
-			return true
-		}
-	}
-	return false
-}
-
-// installed is the folder an installed magpie keeps its files in, or ""
-// with no home folder.
-func installed() string {
-	if x := os.Getenv("XDG_CONFIG_HOME"); rooted(x) {
-		return filepath.Join(x, "magpie")
-	}
-	h, err := Home()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(h, ".config", "magpie")
+	return absolute(filepath.Join(Beside(exe), DataName))
 }
 
 // Beside is the folder a portable magpie run from exe keeps its data folder

@@ -13,7 +13,9 @@ func TestFoldersJoinedOnce(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(r, "cfg"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(r, "cache"))
 	t.Cleanup(func() { UseExecutable("") })
-	UseExecutable("")
+	exe := touch(t, filepath.Join(r, "app", "magpie.exe"))
+	UseExecutable(exe)
+	data := filepath.Join(r, "app", "data")
 
 	for name, f := range map[string]func(){
 		"Config":   func() { Config() },
@@ -25,17 +27,22 @@ func TestFoldersJoinedOnce(t *testing.T) {
 			t.Errorf("%s with the folders unchanged: %.0f allocations", name, n)
 		}
 	}
-	if got, want := JoinFile(Join(Cache(), "models"), "openai", ".json"), filepath.Join(r, "cache", "magpie", "models", "openai.json"); got != want {
+	if got, want := JoinFile(Join(Cache(), "models"), "openai", ".json"), filepath.Join(data, "cache", "models", "openai.json"); got != want {
 		t.Errorf("JoinFile = %q, want %q", got, want)
 	}
 
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(r, "other"))
-	if got, want := Cache(), filepath.Join(r, "other", "magpie"); got != want {
-		t.Errorf("a cache folder changed since: %q, want %q", got, want)
+	if got, want := Cache(), filepath.Join(data, "cache"); got != want {
+		t.Errorf("XDG changed the portable cache: %q, want %q", got, want)
 	}
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv(homeVar(), filepath.Join(r, "home"))
-	if got, want := Config(), filepath.Join(r, "home", ".config", "magpie"); got != want {
-		t.Errorf("under the home folder: %q, want %q", got, want)
+	if got := Config(); got != data {
+		t.Errorf("HOME changed the portable config: %q, want %q", got, data)
+	}
+	other := touch(t, filepath.Join(r, "other", "magpie.exe"))
+	UseExecutable(other)
+	if got, want := Cache(), filepath.Join(r, "other", "data", "cache"); got != want {
+		t.Errorf("an executable changed since: %q, want %q", got, want)
 	}
 }

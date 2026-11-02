@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/agentenv"
+	"github.com/yetone/magpie/internal/appdir"
 )
 
 const (
@@ -40,6 +41,10 @@ const (
 	// passes Marker along.
 	Marker = "MAGPIE_TEST_SANDBOX"
 )
+
+// Tests exercise their HOME/XDG fixtures; production starts portable.
+// This also covers packages with their own TestMain isolation.
+func init() { appdir.UseExecutable("") }
 
 // folderVars are the variables Isolate points into the temporary home.
 var folderVars = []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"}

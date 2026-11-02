@@ -1,4 +1,4 @@
-package appdir
+package appdir_test
 
 import (
 	"testing"

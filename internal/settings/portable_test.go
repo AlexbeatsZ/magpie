@@ -9,7 +9,7 @@ import (
 	"github.com/yetone/magpie/internal/testenv"
 )
 
-// A data folder beside magpie takes every file of its own (#508): the
+// A fresh executable keeps every file in its adjacent data folder: the
 // settings land in it, whatever HOME and XDG_CONFIG_HOME say, and the
 // files of an install from before the rename aren't copied in.
 func TestPortableSettings(t *testing.T) {
@@ -25,7 +25,7 @@ func TestPortableSettings(t *testing.T) {
 
 	exe := filepath.Join(r, "Magpie", "magpie.exe")
 	data := filepath.Join(r, "Magpie", "data")
-	if err := os.MkdirAll(data, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(exe, nil, 0o755); err != nil {
@@ -59,7 +59,7 @@ func TestPortableSettings(t *testing.T) {
 		t.Fatalf("the profile's ~/.config/magpie was touched: %v", err)
 	}
 
-	// without the data folder it's the profile again
+	// The explicit test override can still exercise legacy profile fixtures.
 	appdir.UseExecutable("")
 	if got, want := Path(), filepath.Join(r, "home", ".config", "magpie", "settings.json"); got != want {
 		t.Fatalf("installed Path() = %q, want %q", got, want)

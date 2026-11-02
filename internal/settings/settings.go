@@ -1445,11 +1445,11 @@ func renameInMap(m reflect.Value, from, to string) bool {
 // Path is the settings file.
 func Path() string { return appdir.Join(Dir(), "settings.json") }
 
-// Dir is the folder every magpie file lives in: the data folder beside a
-// portable magpie (appdir.Portable), else ~/.config/magpie.
+// Dir is magpie's data folder beside the executable (appdir.Config).
+// Tests can explicitly select legacy profile paths with UseExecutable.
 func Dir() string { return appdir.Config() }
 
-// Portable is the data folder of a portable magpie, or "" when installed.
+// Portable is magpie's data folder beside the executable.
 func Portable() string { return appdir.Portable() }
 
 // Serialize reads with saves too: the editor preserves hard links by
