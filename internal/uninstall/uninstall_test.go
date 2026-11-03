@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -22,33 +21,11 @@ import (
 func fakes(t *testing.T, list []*agent.Agent, isWired map[string]bool, failing map[string]error) *[]string {
 	t.Helper()
 	var did []string
-	wasAgents, wasWired, wasDisconnect := agents, wired, disconnectOne
-	wasFailover, wasPort, wasRestart := endFailover, portRollouts, restartCodexApp
 	wasService, wasAutostart, wasShortcut, wasScheme, wasPII, wasExe := removeService, autostartOff, removeShortcut, removeScheme, endPII, executable
 	t.Cleanup(func() {
-		agents, wired, disconnectOne = wasAgents, wasWired, wasDisconnect
-		endFailover, portRollouts, restartCodexApp = wasFailover, wasPort, wasRestart
 		removeService, autostartOff, removeShortcut, removeScheme, endPII, executable = wasService, wasAutostart, wasShortcut, wasScheme, wasPII, wasExe
 	})
-	agents = func() []*agent.Agent { return list }
-	wired = func(a *agent.Agent) bool { return isWired[a.ID] }
-	disconnectOne = func(a *agent.Agent) error {
-		did = append(did, "disconnect "+a.ID)
-		if err := failing[a.ID]; err != nil {
-			return err
-		}
-		isWired[a.ID] = false
-		return nil
-	}
-	endFailover = func() (bool, error) { did = append(did, "failover"); return true, nil }
-	portRollouts = func(time.Duration) { did = append(did, "rollouts") }
-	restartCodexApp = func(context.Context, time.Duration) (int, bool, error) {
-		did = append(did, "codex app")
-		return 1, false, nil
-	}
-	step := func(name string) func() error {
-		return func() error { did = append(did, name); return nil }
-	}
+	step := func(name string) func() error { return func() error { did = append(did, name); return nil } }
 	removeService = step("service")
 	autostartOff = step("autostart")
 	removeShortcut = func(string) error { did = append(did, "shortcut"); return nil }
@@ -89,7 +66,7 @@ func TestRunOrder(t *testing.T) {
 
 	r := Run(context.Background())
 
-	want := []string{"service", "autostart", "shortcut", "scheme", "pii", "failover", "disconnect codex", "disconnect claude", "rollouts", "codex app"}
+	want := []string{"service", "autostart", "shortcut", "scheme", "pii"}
 	if !slices.Equal(*did, want) {
 		t.Fatalf("did %q, want %q", *did, want)
 	}
@@ -102,7 +79,7 @@ func TestRunOrder(t *testing.T) {
 	if r.Exe != "/opt/magpie/magpie" {
 		t.Fatalf("exe %q", r.Exe)
 	}
-	if len(r.Agents) != 2 || r.Agents[0].What != "Codex" || r.Agents[1].What != "Claude Code" {
+	if len(r.Agents) != 0 {
 		t.Fatalf("agents %+v", r.Agents)
 	}
 }
@@ -110,33 +87,14 @@ func TestRunOrder(t *testing.T) {
 // An agent that can't be disconnected is said, and the rest are still
 // done; Codex not among them leaves the Codex app alone.
 func TestRunSaysWhatFailed(t *testing.T) {
-	claude := &agent.Agent{ID: "claude", Name: "Claude Code"}
-	goose := &agent.Agent{ID: "goose", Name: "Goose"}
-	did := fakes(t, []*agent.Agent{claude, goose}, map[string]bool{"claude": true, "goose": true}, map[string]error{"claude": errors.New("settings.json: permission denied")})
+	fakes(t, nil, nil, nil)
+	removeService = func() error { return errors.New("service failed") }
 	r := Run(context.Background())
-	if slices.Contains(*did, "codex app") {
-		t.Fatalf("the Codex app restarted with no Codex connected: %q", *did)
-	}
-	if !slices.Contains(*did, "disconnect goose") {
-		t.Fatalf("goose skipped after claude failed: %q", *did)
-	}
 	if !r.Failed() {
-		t.Fatal("not failed")
+		t.Fatal("failure lost")
 	}
-	says := strings.Join(r.Says(), "\n")
-	if !strings.Contains(says, "! disconnected Claude Code: settings.json: permission denied") || !strings.Contains(says, "✓ disconnected Goose") {
-		t.Fatalf("says:\n%s", says)
-	}
-}
-
-// A Codex turn still running past the wait leaves the app-server alone,
-// and the report tells the user to reopen the app.
-func TestRunCodexAppLeft(t *testing.T) {
-	codex := &agent.Agent{ID: "codex", Name: "Codex"}
-	fakes(t, []*agent.Agent{codex}, map[string]bool{"codex": true}, nil)
-	restartCodexApp = func(context.Context, time.Duration) (int, bool, error) { return 0, true, nil }
-	if r := Run(context.Background()); !r.CodexApp {
-		t.Fatal("CodexApp not said")
+	if len(r.Agents) != 0 || r.CodexApp {
+		t.Fatalf("touched an agent: %+v", r)
 	}
 }
 

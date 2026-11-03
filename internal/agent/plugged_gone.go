@@ -79,42 +79,6 @@ func pluggedOff(spec string) *Agent {
 	return plugged(home, p)
 }
 
-// Gone is what RestoreGone did: the files it put back as the user had
-// them, and those magpie was already out of. PluginOff names the agent of
-// a plugin switched off with nothing stashed: magpie is out of it already.
-type Gone struct {
-	Put, Off  []string
-	PluginOff string
-}
-
-// RestoreGone puts back what the user had in each file magpie wired for
-// the agent id of a plugin that is gone (deleted on disk, or taken out of
-// plugins.json by hand), from the stash alone, for `magpie <id> default`.
-// ok is false when id is an agent here, or nothing is stashed for it and
-// no plugin switched off adds it.
-func RestoreGone(id string) (g Gone, ok bool, err error) {
-	id = strings.ToLower(strings.TrimSpace(id))
-	for _, a := range All() {
-		if strings.EqualFold(a.ID, id) {
-			return g, false, nil
-		}
-	}
-	g.Put, g.Off, err = restoreLeft(func(sid string, _ pluggedStash) bool { return sid == id })
-	if len(g.Put)+len(g.Off) > 0 || err != nil {
-		return g, true, err
-	}
-	for _, e := range plugin.Load().Plugins {
-		if !e.Off {
-			continue
-		}
-		if a := pluggedOff(e.Spec); a != nil && a.ID == id {
-			g.PluginOff = a.Name
-			return g, true, nil
-		}
-	}
-	return g, false, nil
-}
-
 // restoreLeft puts back each agent plugin's file stashed that match
 // takes, from the stash: put are the files put back, off those whose
 // wiring was gone already (its stash is forgotten). A stash that doesn't

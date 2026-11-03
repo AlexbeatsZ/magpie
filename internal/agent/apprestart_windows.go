@@ -12,9 +12,8 @@ import (
 	"time"
 	"unsafe"
 
-	"golang.org/x/sys/windows"
-
 	"github.com/yetone/magpie/internal/proc"
+	"golang.org/x/sys/windows"
 )
 
 var procGetApplicationUserModelID = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetApplicationUserModelId")

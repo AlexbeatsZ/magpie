@@ -13,22 +13,6 @@ import (
 	"github.com/yetone/magpie/internal/provider"
 )
 
-// Codex's background app-server (the daemon codex sessions attach to)
-// builds its model list once, as it starts, and runs on per CODEX_HOME,
-// across terminals, with no idle exit. So a change magpie makes to what
-// Codex reads at start — wiring it in, taking it out, a new catalog —
-// reaches no codex session started after it until the daemon restarts:
-// luci (Discord, Codex 0.162) took Codex off magpie, opened codex, which
-// started the daemon on Codex's own models, and after wiring Codex in
-// again every new codex showed the official list. With no codex session
-// attached magpie restarts it itself, right after the change and every
-// so often after (a session open then is one the user closes later);
-// with one attached the Agents page offers the restart.
-
-// codexRestartAll is what is said after a change while copies of Codex
-// run that magpie leaves to the user.
-var codexRestartAll = newNotice("Codex builds its model list at start-up — restart the Codex app, open codex sessions and the app-server they share ({command}) to see this.").say("command", provider.CodexDaemonRestart)
-
 // keepCodexDaemon is provider.KeepCodexDaemonCurrent; a var so tests can
 // see what is asked of it without a codex.
 var keepCodexDaemon = provider.KeepCodexDaemonCurrent
@@ -59,19 +43,6 @@ func codexDaemonCheck(path string) provider.CodexDaemonCheck {
 	codexDaemonSeen.at, codexDaemonSeen.check = time.Now(), c
 	codexDaemonSeen.Unlock()
 	return c
-}
-
-// codexDaemonNotice is what is said of the daemon after a change: ok is
-// false when there is none behind it.
-func codexDaemonNotice(path string) (string, bool) {
-	c := codexDaemonCheck(path)
-	switch {
-	case c.Restarted:
-		return noticeCodexdaemon.String(), true
-	case c.Behind && c.Attached > 0:
-		return noticeCodexBehind.say("command", provider.CodexDaemonRestart), true
-	}
-	return "", false
 }
 
 // codexDaemonEvery is how often KeepCodexDaemonCurrent looks while the
@@ -142,9 +113,3 @@ func codexDaemonBehind() []StaleCopy {
 	}
 	return []StaleCopy{{Kind: "daemon", Since: c.Since}}
 }
-
-// what codexdaemon says after a change (notice.go)
-var (
-	noticeCodexBehind = newNotice("Codex builds its model list at start-up, and the app-server open codex sessions share started before this: restart it (Restart on magpie's Agents page, or {command}) and the Codex app to see this.")
-	noticeCodexdaemon = newNotice("magpie restarted the app-server codex sessions share, which none was on, so new codex sessions have this; restart the Codex app, if it is open, to see it there.")
-)

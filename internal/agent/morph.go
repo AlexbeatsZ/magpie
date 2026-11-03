@@ -17,19 +17,11 @@ package agent
 
 import (
 	"path/filepath"
-	"strconv"
-	"strings"
-
-	"github.com/yetone/magpie/internal/edit"
 )
 
 // morphUA is the User-Agent magpie has morph send, in llm.headers: its
 // requests otherwise carry the OpenAI SDK's, which tells them from no one's.
 const morphUA = "mistermorph"
-
-// morphKeys are the keys under llm magpie writes, in the order they are put
-// back.
-var morphKeys = []string{"inference_provider", "endpoint", "api_key", "model", "context_window_tokens", "headers.User-Agent"}
 
 func morph(home string) *Agent { return morphIn(here(home)) }
 
@@ -41,138 +33,12 @@ func morphIn(at place) *Agent {
 	if path == "" {
 		path = filepath.Join(dir, "config.yaml")
 	}
-	key := "morph:" + path + ":"
-	getKey := func(k string) string { v, _ := edit.GetYAML(path, "llm."+k); return v }
-	// the token is magpie's alone, where the endpoint moves with the
-	// gateway's port
-	onMagpie := func() bool { return ourKey(getKey("api_key")) }
-	// restore puts back what the user had under llm before magpie
-	restore := func() error {
-		var del []string
-		var kvs []edit.KV
-		for _, k := range morphKeys {
-			v := unstash(key + k)
-			switch {
-			case v == "":
-				del = append(del, "llm."+k)
-			case k == "context_window_tokens":
-				if n, err := strconv.Atoi(v); err == nil {
-					kvs = append(kvs, edit.KV{Path: "llm." + k, Value: n})
-					break
-				}
-				fallthrough
-			default:
-				kvs = append(kvs, edit.KV{Path: "llm." + k, Value: v})
-			}
-		}
-		if err := edit.DelYAML(path, del...); err != nil {
-			return err
-		}
-		// the headers magpie's User-Agent was alone in
-		if m := edit.GetYAMLMap(path, "llm.headers"); m != nil && len(m) == 0 {
-			if err := edit.DelYAML(path, "llm.headers"); err != nil {
-				return err
-			}
-		}
-		if len(kvs) == 0 {
-			return nil
-		}
-		return edit.SetYAML(path, kvs...)
-	}
-	// window is the context magpie knows ref to take, 0 when unknown
-	window := func(ref string) int {
-		for _, m := range sharedModels("morph") {
-			if m.ID == ref {
-				return m.Context
-			}
-		}
-		return 0
-	}
+
 	return &Agent{
-		ID: "morph", Name: "Mister Morph", Icon: "mistermorph-color", Aliases: []string{"mistermorph", "mister-morph"}, Spelled: prefixed, NoNames: true,
+		ID: "morph", Name: "Mister Morph", Icon: "mistermorph-color", Aliases: []string{"mistermorph", "mister-morph"},
 		UA: []string{morphUA},
 		// no Bin: morph is other tools' name too; ~/.morph is made by its
 		// first run, `morph install` or the desktop app's setup
 		Dir: dir, Path: path,
-		Notice: func() string {
-			if Running(`(^|/)morph( |$)`, `(^|/)mistermorph( |$)`) {
-				return noticeMorph.String()
-			}
-			return ""
-		},
-		Check: func() string {
-			if !onMagpie() {
-				return ""
-			}
-			return wiringOff("Mister Morph", path, func(k string) (string, bool) { return edit.GetYAML(path, "llm."+k) },
-				"endpoint", at.v1(), "inference_provider", "openai_response_compatible")
-		},
-		Fields: []Field{{
-			Key: "model", Label: "model",
-			Get: func() string {
-				v := getKey("model")
-				if v != "" && onMagpie() {
-					return magpieID + "/" + v
-				}
-				return v
-			},
-			Set: func(v string) error {
-				if v == "" {
-					if onMagpie() {
-						return restore()
-					}
-					return edit.DelYAML(path, "llm.model")
-				}
-				if ref, ok := strings.CutPrefix(v, magpieID+"/"); ok && isMagpie(ref) {
-					if !onMagpie() {
-						kv := map[string]string{}
-						for _, k := range morphKeys {
-							kv[key+k] = getKey(k)
-						}
-						stash(kv)
-					}
-					kvs := []edit.KV{
-						{Path: "llm.inference_provider", Value: "openai_response_compatible"},
-						{Path: "llm.endpoint", Value: at.v1()},
-						{Path: "llm.api_key", Value: at.gwKey()},
-						{Path: "llm.model", Value: ref},
-						{Path: "llm.headers.User-Agent", Value: morphUA},
-					}
-					if n := window(ref); n > 0 {
-						kvs = append(kvs, edit.KV{Path: "llm.context_window_tokens", Value: n})
-					} else if err := edit.DelYAML(path, "llm.context_window_tokens"); err != nil {
-						return err
-					}
-					return edit.SetYAML(path, kvs...)
-				}
-				if onMagpie() {
-					if err := restore(); err != nil {
-						return err
-					}
-				}
-				return edit.SetYAML(path, edit.KV{Path: "llm.model", Value: v})
-			},
-			Options: func(cur map[string]string) []Option {
-				return withVia(ownOptions("", cur["model"]), "morph", magpieID+"/")
-			},
-		}, {
-			// llm.reasoning_effort; unset, morph sends none
-			Key: "effort", Label: "effort",
-			Get: func() string { return getKey("reasoning_effort") },
-			Set: func(v string) error {
-				if v == "" {
-					return edit.DelYAML(path, "llm.reasoning_effort")
-				}
-				return edit.SetYAML(path, edit.KV{Path: "llm.reasoning_effort", Value: v})
-			},
-			Options: func(map[string]string) []Option {
-				return static("none", "minimal", "low", "medium", "high", "xhigh", "max")
-			},
-		}},
 	}
 }
-
-// what morph says after a change (notice.go)
-var (
-	noticeMorph = newNotice("Mister Morph's Console uses this for new tasks; restart open morph chats to use it there.")
-)

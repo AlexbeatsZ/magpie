@@ -55,23 +55,6 @@ func CodexCompactHeld(home string) []CodexCompactHold {
 	return out
 }
 
-// DropCodexCompactHolds takes those keys out of the config, so Codex
-// compacts where Long conversations says.
-func DropCodexCompactHolds(home string) error {
-	for _, h := range CodexCompactHeld(home) {
-		var err error
-		if h.Profile == "" {
-			err = edit.DelTOMLTop(h.Path, h.Key)
-		} else {
-			err = edit.DelTOMLKey(h.Path, "profiles."+tomlQuoted(h.Profile), h.Key)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // CodexModel is the magpie model this machine's Codex config runs (home ""
 // is the user's): the profile's the config picks, else the top-level one,
 // as Codex reads them; "" when Codex runs a model of its own provider.

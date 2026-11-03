@@ -39,7 +39,7 @@ var Vars = []string{
 	// Gemini CLI's session/config home
 	"GEMINI_CLI_HOME",
 	// Antigravity's gateway, which wins over its settings.json
-	"AGY_LLM_GATEWAY_URL",
+
 	// Cline: its folder, its data, its sessions and its MCP settings file
 	"CLINE_DIR", "CLINE_DATA_DIR", "CLINE_SESSION_DATA_DIR", "CLINE_MCP_SETTINGS_PATH",
 	// Pi and its forks (OmO, Senpi), whose profile and config are apart
@@ -111,7 +111,7 @@ var Vars = []string{
 	"OPENCODE_CONFIG_DIR", "OPENCODE_DB", "OPENCHAMBER_DATA_DIR",
 	// Kiro Crew's home, and the adapters it runs Codex, Claude Code and Pi
 	// through
-	"KIROCREW_HOME", "CODEX_ACP_BIN", "CLAUDE_AGENT_ACP_BIN", "PI_ACP_BIN",
+	"KIROCREW_HOME",
 	// Droid's home, Windsurf's API server, ZCode's credential seed: what
 	// makes an account or an installation visible that the test didn't make
 	"FACTORY_HOME_OVERRIDE", "WINDSURF_API_SERVER_URL", "ZCODE_CREDENTIAL_SECRET",

@@ -22,11 +22,6 @@ type NativeConnection struct {
 
 type OfflineAction string
 
-const (
-	OfflineStage      OfflineAction = "stage"
-	OfflineDisconnect OfflineAction = "disconnect"
-)
-
 // RuntimeUnavailableError is created only for an initial runtime read,
 // before the operation has written either runtime settings or local files.
 type RuntimeUnavailableError struct {

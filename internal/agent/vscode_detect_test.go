@@ -123,7 +123,7 @@ func TestVSCodeDetected(t *testing.T) {
 				}
 			}
 			t.Setenv("PATH", binDir)
-			if got := vscodeAt(dir).Detected(); got != tt.want {
+			if got := vscodeKindAt(vscodeStable, dir).Detected(); got != tt.want {
 				t.Errorf("Detected() = %v, want %v", got, tt.want)
 			}
 			if tt.config == "" {

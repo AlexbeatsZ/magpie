@@ -1,5 +1,11 @@
 # Sync and backup
 
+In this fork, agent model setup is manual. Legacy profile documents are kept
+as backup data, while new bundles omit agent model fields and restore reports
+old fields as skipped. Sync never applies or restores those fields locally.
+Resource data continues through the existing Library owner. See
+[agent resources](agent-wiring.md) for the compatibility boundary.
+
 `internal/backup` collects magpie's portable setup into a passphrase-sealed
 bundle. `internal/davsync` keeps that bundle in a WebDAV folder, an S3 bucket
 or a GitHub repository. It merges changes between computers; it does not

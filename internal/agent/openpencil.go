@@ -46,48 +46,21 @@ package agent
 // through an agent magpie wires (Pi, an ACP agent) or a base URL typed in.
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 
-	"github.com/tidwall/gjson"
-
 	"github.com/yetone/magpie/internal/appdir"
-	"github.com/yetone/magpie/internal/edit"
-	"github.com/yetone/magpie/internal/gateway"
 )
 
 // openPencilApp is OpenPencil's macOS bundle, as its release builds it
 // (scripts/bundle-macos.sh).
 var openPencilApp = desktopApp{id: "com.zseven-w.openpencil", names: []string{"OpenPencil.app"}}
 
-// openPencilMaxModels is how many models OpenPencil keeps for one entry
-// (MAX_BUILTIN_AGENT_MODELS); it drops the rest when it next saves.
-const openPencilMaxModels = 64
-
-// openPencilProc is OpenPencil's process, its binary's name on every system
-// (the .app's CFBundleExecutable, the .deb's and AppImage's, the .exe).
-var openPencilProc = []string{`(^|/)openpencil-desktop( |$)`}
-
-var noticeOpenPencil = newNotice("OpenPencil reads its settings when it starts and writes them all back when it quits — quit OpenPencil before changing this, then open it and pick a magpie model in its chat's model picker.")
-
-// errOpenPencilRunning is a change refused while OpenPencil runs.
-var errOpenPencilRunning = errors.New("OpenPencil writes its settings back when it quits, over what magpie writes now: quit OpenPencil, then try again")
-
 func openPencil(home, cfg string) *Agent {
 	dir := openPencilDir(home, cfg)
 	path := filepath.Join(dir, "settings.json")
-	write := func(on bool) error {
-		if !on {
-			return openPencilUnwire(path)
-		}
-		return openPencilWire(path, openPencilEntry(gateway.URL()))
-	}
-	return atomic(&Agent{
+
+	return &Agent{
 		ID: "openpencil", Name: "OpenPencil", Icon: "generic", Aliases: []string{"open-pencil", "openpencil-desktop"},
 		Dir: dir, Path: path,
 		// its settings folder once it has run, ~/.openpencil once its op
@@ -96,47 +69,7 @@ func openPencil(home, cfg string) *Agent {
 		detect: func() bool {
 			return isDir(dir) || isDir(filepath.Join(home, ".openpencil")) || macBundle(openPencilApp) || openPencilWindowsApp()
 		},
-		Notice: func() string {
-			if openPencilWired(path) && Running(openPencilProc...) {
-				return noticeOpenPencil.String()
-			}
-			return ""
-		},
-		// a sync while it runs is written as well: a quit puts back what it
-		// read, and the next sync puts magpie's models back again
-		Sync: func() error {
-			if !openPencilWired(path) {
-				return nil
-			}
-			return write(true)
-		},
-		// its picker lists the models picked for it (#1508)
-		ListsModels: true,
-		Fields: []Field{{
-			Key: "provider", Label: "provider",
-			Get: func() string {
-				if openPencilWired(path) {
-					return magpieID
-				}
-				return ""
-			},
-			Set: func(v string) error {
-				if openPencilRunning() {
-					return errOpenPencilRunning
-				}
-				return write(v != "")
-			},
-			Options: func(map[string]string) []Option {
-				return []Option{{Value: magpieID, Label: "magpie", Icon: "magpie", Note: "every magpie model in OpenPencil's chat model picker"}}
-			},
-		}},
-	}, path)
-}
-
-// openPencilRunning says OpenPencil is open where magpie can tell; on
-// Windows, where Running can't, no, and the notice asks to quit it first.
-var openPencilRunning = func() bool {
-	return runtime.GOOS != "windows" && Running(openPencilProc...)
+	}
 }
 
 // openPencilDir is the folder of OpenPencil's settings.json, as Rust's
@@ -173,143 +106,4 @@ func openPencilWindowsApp() bool {
 		}
 	}
 	return false
-}
-
-// openPencilAgent is an entry of builtin_agents in the order OpenPencil
-// writes one.
-type openPencilAgent struct {
-	ID          string   `json:"id"`
-	Preset      string   `json:"preset"`
-	DisplayName string   `json:"display_name"`
-	Kind        string   `json:"kind"`
-	APIKey      string   `json:"api_key"`
-	Model       string   `json:"model"`
-	Models      []string `json:"models,omitempty"`
-	BaseURL     string   `json:"base_url"`
-	Enabled     bool     `json:"enabled"`
-}
-
-// openPencilEntry is magpie's entry for a gateway at gw: its Chat
-// Completions, the key that names OpenPencil, and the models picked for it
-// as OpenPencil keeps a list (normalize_builtin_models): each once, at most
-// 64, the list written only for two or more.
-func openPencilEntry(gw string) openPencilAgent {
-	var ms []string
-	seen := map[string]bool{}
-	for _, m := range sharedModels("openpencil") {
-		if m.ID == "" || seen[m.ID] || len([]rune(m.ID)) > 256 {
-			continue
-		}
-		seen[m.ID] = true
-		ms = append(ms, m.ID)
-		if len(ms) == openPencilMaxModels {
-			break
-		}
-	}
-	e := openPencilAgent{ID: magpieID, Preset: "custom", DisplayName: "magpie", Kind: "openai-compat",
-		APIKey: agentKeyAt("openpencil", gw), BaseURL: gw + "/v1", Enabled: true}
-	if len(ms) > 0 {
-		e.Model = ms[0]
-	}
-	if len(ms) > 1 {
-		e.Models = ms
-	}
-	return e
-}
-
-// openPencilWired says settings.json has magpie's entry.
-func openPencilWired(path string) bool {
-	_, i, _ := openPencilAgents(path)
-	return i >= 0
-}
-
-// openPencilAgents are the entries of settings.json's builtin_agents as
-// written, and the place of magpie's among them (-1 for none). A file that
-// isn't there or holds nothing has none; one OpenPencil wouldn't read, or
-// whose version it doesn't know, is an error, so magpie leaves it alone.
-func openPencilAgents(path string) (list []json.RawMessage, i int, err error) {
-	i = -1
-	b, err := edit.Read(path)
-	if err != nil {
-		return nil, i, err
-	}
-	if len(bytes.TrimSpace(b)) == 0 {
-		return nil, i, nil
-	}
-	if !json.Valid(b) || !gjson.ParseBytes(b).IsObject() {
-		return nil, i, fmt.Errorf("%s isn't JSON OpenPencil reads", path)
-	}
-	if v := gjson.GetBytes(b, "version"); v.Type != gjson.Number || v.Raw != "1" {
-		return nil, i, fmt.Errorf("%s says version %s, not the 1 OpenPencil reads, so magpie leaves it alone", path, v.Raw)
-	}
-	raw := gjson.GetBytes(b, "builtin_agents")
-	if !raw.Exists() || raw.Type == gjson.Null {
-		return nil, i, nil
-	}
-	if !raw.IsArray() || json.Unmarshal([]byte(raw.Raw), &list) != nil {
-		return nil, i, fmt.Errorf("%s: builtin_agents is not a list", path)
-	}
-	for j, e := range list {
-		if gjson.GetBytes(e, "id").String() == magpieID {
-			return list, j, nil
-		}
-	}
-	return list, i, nil
-}
-
-// openPencilWire puts magpie's entry into settings.json, the file made when
-// there is none; an entry there already keeps the name and the on/off the
-// user gave it in OpenPencil. The file is written only when the entry says
-// something else.
-func openPencilWire(path string, want openPencilAgent) error {
-	list, i, err := openPencilAgents(path)
-	if err != nil {
-		return err
-	}
-	if i >= 0 {
-		if n := gjson.GetBytes(list[i], "display_name"); n.Type == gjson.String {
-			want.DisplayName = n.String()
-		}
-		if e := gjson.GetBytes(list[i], "enabled"); e.IsBool() {
-			want.Enabled = e.Bool()
-		}
-	}
-	w, err := json.Marshal(want)
-	if err != nil {
-		return err
-	}
-	if i >= 0 && sameJSON(string(list[i]), want) {
-		return nil
-	}
-	if i >= 0 {
-		list[i] = w
-	} else {
-		list = append(list, w)
-	}
-	if _, has := edit.GetJSON(path, "version"); !has {
-		return edit.SetJSON(path, edit.KV{Path: "version", Value: 1}, edit.KV{Path: "builtin_agents", Value: list})
-	}
-	return edit.SetJSON(path, edit.KV{Path: "builtin_agents", Value: list})
-}
-
-// openPencilUnwire takes magpie's entry out of settings.json, and the file
-// when nothing else is left in it: the version and an empty list are what
-// magpie wrote in a file OpenPencil hasn't saved yet.
-func openPencilUnwire(path string) error {
-	list, i, err := openPencilAgents(path)
-	if err != nil || i < 0 {
-		return err
-	}
-	list = append(list[:i], list[i+1:]...)
-	if len(list) == 0 {
-		var rest map[string]json.RawMessage
-		if b, err := edit.Read(path); err == nil && json.Unmarshal(b, &rest) == nil {
-			delete(rest, "version")
-			delete(rest, "builtin_agents")
-			if len(rest) == 0 {
-				return os.Remove(path)
-			}
-		}
-	}
-	return edit.SetJSON(path, edit.KV{Path: "builtin_agents", Value: list})
 }

@@ -28,12 +28,7 @@ package agent
 // settings.json's "model": its model is picked in the IDE.
 
 import (
-	"encoding/json"
 	"path/filepath"
-	"slices"
-	"strings"
-
-	"github.com/yetone/magpie/internal/edit"
 )
 
 func codebuddy(home string) *Agent { return codebuddyIn(here(home)) }
@@ -48,69 +43,12 @@ func codebuddyIn(at place) *Agent {
 		dir = at.join(".codebuddy")
 	}
 	path := filepath.Join(dir, "models.json")
-	write := func(on bool) error { return buddyWriteAt(path, "codebuddy", on, at) }
-	settings := filepath.Join(dir, "settings.json")
-	model := func() string { v, _ := edit.GetJSON(settings, "model"); return v }
-	// ours is whether id is one of magpie's models in models.json
-	ours := func(id string) bool {
-		d, _ := workbuddyRead(path)
-		return slices.ContainsFunc(d.models, func(raw json.RawMessage) bool { e, ok := workbuddyMine(raw); return ok && e.ID == id })
-	}
+
 	// the IDE alone is CodeBuddy here, its CLI not installed
 	ide := func() bool { return at.spell == nil && (&Agent{ID: "codebuddy"}).HasApp() }
 	return &Agent{
 		ID: "codebuddy", Name: "CodeBuddy", Icon: "codebuddy-color", Aliases: []string{"codebuddy-code", "cbc"},
-		UA: []string{"codebuddy"}, Spelled: prefixed,
+		UA:  []string{"codebuddy"},
 		Bin: "codebuddy", Dir: dir, Path: path, sign: ide,
-		Sync: func() error {
-			if !workbuddyWired(path) {
-				return nil
-			}
-			return write(true)
-		},
-		Notice: func() string {
-			if Running(`(^|/)(codebuddy|cbc|codebuddy-code)( |$)`) {
-				return noticeCodebuddy.String()
-			}
-			return ""
-		},
-		Fields: []Field{{
-			Key: "model", Label: "model",
-			Get: func() string {
-				m := model()
-				if m != "" && ours(m) {
-					return magpieID + "/" + m
-				}
-				return m
-			},
-			Set: func(v string) error {
-				if ref, ok := strings.CutPrefix(v, magpieID+"/"); ok && isMagpie(ref) {
-					if err := write(true); err != nil {
-						return err
-					}
-					return edit.SetJSON(settings, edit.KV{Path: "model", Value: ref})
-				}
-				// CodeBuddy's own: magpie's models come out of its list
-				if err := write(false); err != nil {
-					return err
-				}
-				if v == "" {
-					return edit.DelJSON(settings, "model")
-				}
-				return edit.SetJSON(settings, edit.KV{Path: "model", Value: v})
-			},
-			Options: func(cur map[string]string) []Option {
-				var out []Option
-				if v := cur["model"]; v != "" && !usesMagpie(v) {
-					out = append(out, Option{Value: v, Icon: modelIcon("", v)})
-				}
-				return withVia(out, "codebuddy", magpieID+"/")
-			},
-		}},
 	}
 }
-
-// what codebuddy says after a change (notice.go)
-var (
-	noticeCodebuddy = newNotice("CodeBuddy Code reads its model when a session starts — restart open codebuddy sessions, or run /clear in them, to use this.")
-)

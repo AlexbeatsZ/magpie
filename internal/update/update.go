@@ -1,5 +1,5 @@
 // Package update keeps magpie current. Builds are published as GitHub
-// releases of yetone/magpie-releases; usemagpie.ai/api/latest describes the
+// releases of this fork; the release update.json describes the
 // newest one: its version, notes, and every file with its SHA-256.
 //
 // The macOS app replaces its own bundle: the new zip is downloaded, checked

@@ -7,7 +7,6 @@ import (
 
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/backup"
-	"github.com/yetone/magpie/internal/profile"
 )
 
 // An agent's field that sync wrote over a value picked on this computer,
@@ -94,32 +93,7 @@ type brought struct{ was, now string }
 // (a provider re-settling the model behind it) is put back. It returns
 // each field the bring changed here.
 func bringAgents(fields map[string]string, keep map[string]bool) (map[string]brought, error) {
-	in := maps.Clone(fields)
-	for k := range keep {
-		delete(in, k)
-	}
-	before := profile.Fields()
-	_, err := backup.Restore(backup.Bundle{Agents: in}, backup.Parts{Agents: true})
-	after := profile.Fields()
-	back := map[string]string{}
-	for k := range keep {
-		if v, ok := before[k]; ok && after[k] != v {
-			back[k] = v
-		}
-	}
-	if len(back) > 0 {
-		if _, berr := profile.ApplyFields(back); berr != nil && err == nil {
-			err = berr
-		}
-		after = profile.Fields()
-	}
-	got := map[string]brought{}
-	for k, v := range after {
-		if !keep[k] && before[k] != v {
-			got[k] = brought{before[k], v}
-		}
-	}
-	return got, err
+	return map[string]brought{}, nil
 }
 
 // broughtIn records what a bring set here, and what it wrote over when

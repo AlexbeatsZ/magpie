@@ -3,61 +3,50 @@ package backup
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
-
-	"github.com/yetone/magpie/internal/agent"
-	"github.com/yetone/magpie/internal/edit"
 )
 
-// Defaults survive encryption and restore, while a legacy backup's
-// missing model does not reset the model already chosen here.
-func TestAgentDefaultsRoundTrip(t *testing.T) {
+// Legacy model settings survive encryption, but restoring them never writes
+// a manually configured agent. New backups do not collect those settings.
+func TestLegacyAgentSettingsArePreservedAndSkipped(t *testing.T) {
 	home(t)
-	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	path := filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	const own = `{"model":"own-model","theme":"dark"}`
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(own), 0600); err != nil {
 		t.Fatal(err)
 	}
-	b, err := Collect(false, "test")
+	current, err := Collect(false, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := b.Agents["claude.model"]; !ok || v != "" {
-		t.Errorf("backup omitted the default model: %+v", b.Agents)
+	if len(current.Agents) != 0 {
+		t.Fatalf("captured manual models: %v", current.Agents)
 	}
-	data, err := Seal(b, "pw")
+	legacy := Bundle{Version: 1, Agents: map[string]string{"claude.model": "old-model", "claude.effort": "low"}}
+	sealed, err := Seal(legacy, "pw")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err = Open(data, "pw")
+	restored, err := Open(sealed, "pw")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := agent.Find("claude")
+	if !reflect.DeepEqual(restored.Agents, legacy.Agents) {
+		t.Fatal("lost legacy fields")
+	}
+	result, err := Restore(restored, Parts{Agents: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Apply("model", "opus"); err != nil {
-		t.Fatal(err)
+	if result.Agents != 0 || len(result.Skipped) != 2 {
+		t.Fatalf("unexpected restore: %+v", result)
 	}
-	r, err := Restore(b, Parts{Agents: true})
-	if err != nil || r.Agents != 1 || len(r.Skipped) != 0 || a.Field("model").Get() != "" {
-		t.Errorf("restored %+v %v; model %q", r, err, a.Field("model").Get())
-	}
-	if _, ok := edit.GetJSON(path, "model"); ok {
-		t.Error("restoring the default kept the model key")
-	}
-	if v, _ := edit.GetJSON(path, "theme"); v != "dark" {
-		t.Error("restoring the default changed unrelated settings")
-	}
-	if err := a.Apply("model", "opus"); err != nil {
-		t.Fatal(err)
-	}
-	legacy := Bundle{Version: 1, Agents: map[string]string{"claude.effort": "low"}}
-	if r, err := Restore(legacy, Parts{Agents: true}); err != nil || r.Agents != 1 || a.Field("model").Get() != "opus" {
-		t.Fatalf("legacy restore: %+v %v; model %q", r, err, a.Field("model").Get())
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != own {
+		t.Fatalf("manual settings changed: %q %v", got, err)
 	}
 }

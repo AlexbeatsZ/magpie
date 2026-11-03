@@ -22,11 +22,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/yetone/magpie/internal/appdir"
@@ -119,139 +116,13 @@ func (s ocStore) set(kvs map[string]any) error {
 // model and small are the models OpenChamber sends, "" when it leaves them
 // to OpenCode's config.
 func (s ocStore) model() string { return s.get("defaultModel") }
-func (s ocStore) small() string {
-	if s.get("smallModelUseDefault") != "false" {
-		return ""
-	}
-	return s.get("smallModelOverride")
-}
 
-// projectModels are the projects that pick a default model of their own,
-// name → model.
-func (s ocStore) projectModels() map[string]string {
-	raw, ok := edit.GetJSON(s.settings(), "projects")
-	if !ok {
-		return nil
-	}
-	var ps []struct {
-		Label, Path, DefaultModel string
-	}
-	json.Unmarshal([]byte(raw), &ps)
-	out := map[string]string{}
-	for _, p := range ps {
-		if p.DefaultModel == "" {
-			continue
-		}
-		name := p.Label
-		if name == "" {
-			name = filepath.Base(p.Path)
-		}
-		out[name] = p.DefaultModel
-	}
-	return out
-}
-
-// openChamberOnMagpie says whether OpenChamber sends one of magpie's
-// models: OpenCode's config must keep magpie's provider for it.
-func openChamberOnMagpie() bool {
-	home, _ := os.UserHomeDir()
+func openChamber(home, _ string) *Agent {
 	s := ocStore{openChamberDir(home)}
-	return usesMagpie(s.model(), s.small())
-}
 
-func openChamber(home, cfg string) *Agent {
-	s := ocStore{openChamberDir(home)}
-	oc := opencode(home, cfg)
-	ocPath := oc.Path
-	auth := filepath.Join(home, ".local", "share", "opencode", "auth.json")
-	provider := openCodeKept(ocPath, func() any { return magpieProviderJSONFor("opencode", "opencode") })
-	opts := func(key string) func(map[string]string) []Option {
-		return func(cur map[string]string) []Option {
-			return withVia(ownOptions(auth, cur[key]), "opencode", magpieID+"/")
-		}
-	}
-	// stepped off magpie: its provider goes too, when nothing else in the
-	// OpenCode config names one of its models
-	tidy := func() error {
-		m, _ := edit.GetJSON(ocPath, "model")
-		sm, _ := edit.GetJSON(ocPath, "small_model")
-		if usesMagpie(m, sm, s.model(), s.small()) {
-			return nil
-		}
-		return edit.DelJSON(ocPath, "provider."+magpieID)
-	}
 	return &Agent{
-		ID: "openchamber", Name: "OpenChamber", Icon: "openchamber", Aliases: []string{"chamber"}, Spelled: openCodeSpelled(ocPath, gatewayV1),
+		ID: "openchamber", Name: "OpenChamber", Icon: "openchamber", Aliases: []string{"chamber"},
 		// its model requests are its OpenCode's, and counted as OpenCode's
 		Bin: "openchamber", Dir: s.dir, Path: s.prefs(),
-		Notice: func() string {
-			var notes []string
-			if usesMagpie(s.model()) {
-				ps := s.projectModels()
-				for _, name := range slices.Sorted(maps.Keys(ps)) {
-					if m := ps[name]; !usesMagpie(m) {
-						notes = append(notes, noticeOpenchamber1.say("project", name, "model", m))
-					}
-				}
-			}
-			if Running(`OpenChamber\.app/`, `(^|/)openchamber( |$)`) {
-				notes = append(notes, noticeOpenchamber2.String())
-			}
-			return strings.Join(notes, " ")
-		},
-		Check: func() string {
-			if !usesMagpie(s.model(), s.small()) {
-				return ""
-			}
-			return wiringOff("OpenChamber", ocPath, func(k string) (string, bool) { return edit.GetJSON(ocPath, "provider."+magpieID+".options."+k) },
-				"baseURL", gatewayV1(), "apiKey", hereKey())
-		},
-		ListOnly: true,
-		Sync: func() error {
-			if _, ok := edit.GetJSON(ocPath, "provider."+magpieID); !ok && usesMagpie(s.model(), s.small()) {
-				return edit.SetJSON(ocPath, edit.KV{Path: "provider." + magpieID, Value: provider()})
-			}
-			return syncJSONInOrder(ocPath, "provider."+magpieID, provider)
-		},
-		Fields: []Field{
-			{Key: "model", Label: "model", Get: s.model, Options: opts("model"), Set: func(v string) error {
-				if v == "" {
-					if err := s.set(map[string]any{"defaultModel": nil, "defaultVariant": nil}); err != nil {
-						return err
-					}
-					return tidy()
-				}
-				v, err := openCodeRef(ocPath, "opencode", v)
-				if err != nil {
-					return err
-				}
-				kv := map[string]any{"defaultModel": v}
-				// the variant was the old model's, as OpenChamber's own
-				// picker has it
-				if v != s.model() {
-					kv["defaultVariant"] = nil
-				}
-				return s.set(kv)
-			}},
-			{Key: "small", Label: "small", Get: s.small, Options: opts("small"), Set: func(v string) error {
-				if v == "" {
-					if err := s.set(map[string]any{"smallModelUseDefault": nil, "smallModelOverride": nil}); err != nil {
-						return err
-					}
-					return tidy()
-				}
-				v, err := openCodeRef(ocPath, "opencode", v)
-				if err != nil {
-					return err
-				}
-				return s.set(map[string]any{"smallModelUseDefault": false, "smallModelOverride": v})
-			}},
-		},
 	}
 }
-
-// what openchamber says after a change (notice.go)
-var (
-	noticeOpenchamber1 = newNotice("OpenChamber's project {project} has a default model of its own ({model}), which it uses there instead.")
-	noticeOpenchamber2 = newNotice("OpenChamber takes the new model for new sessions; sessions already open keep theirs.")
-)

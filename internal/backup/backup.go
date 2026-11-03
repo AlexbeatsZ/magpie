@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/access"
-	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/library"
 	"github.com/yetone/magpie/internal/plugin"
@@ -230,9 +229,7 @@ func Collect(keys bool, app string) (Bundle, error) {
 	if len(ps) > 0 {
 		b.Profiles = ps
 	}
-	if snap := profile.Fields(); len(snap) > 0 {
-		b.Agents = snap
-	}
+
 	if b.Library, err = library.Collect(); err != nil {
 		return b, err
 	}
@@ -485,27 +482,11 @@ func Restore(b Bundle, parts Parts) (Result, error) {
 			r.Profiles++
 		}
 	}
-	if parts.Agents && len(b.Agents) > 0 {
-		here := map[string]bool{}
-		for _, a := range agent.Detected() {
-			here[a.ID] = true
-		}
-		// one value at a time, so one that fails (a model of a subscription
-		// not signed in here) leaves the rest to go in
-		for _, k := range profileKeys(b.Agents) {
-			id := k[:max(strings.LastIndex(k, "."), 0)] // codex@wsl:Ubuntu-24.04.model
-			if !here[id] {
-				r.Skipped = append(r.Skipped, k)
-				continue
-			}
-			n, err := profile.ApplyFields(map[string]string{k: b.Agents[k]})
-			if err != nil {
-				r.Skipped = append(r.Skipped, k)
-				continue
-			}
-			r.Agents += n
-		}
+	if parts.Agents {
+		// Old backups remain readable, but model setup belongs to each agent.
+		r.Skipped = append(r.Skipped, profileKeys(b.Agents)...)
 	}
+
 	if parts.Library && b.Library != nil {
 		// Even a keyed uploader can carry a redaction it downloaded and never
 		// held a value for. Fill blanks from this computer at apply time: the

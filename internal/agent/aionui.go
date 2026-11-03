@@ -17,32 +17,14 @@ package agent
 import (
 	"errors"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/sessions"
 	_ "github.com/yetone/magpie/internal/sqlitedb"
 )
-
-// AionUiScheme begins every AionUi add-provider link.
-const AionUiScheme = "aionui://add-provider?"
-
-// AionUiLink is the link that opens AionUi's add-model form with the
-// gateway at gw as an OpenAI-compatible provider named magpie, keyed so
-// that its requests are counted as AionUi's. AionUi's OpenAI-compatible
-// base URLs end in /v1, as its own OpenAI preset does.
-func AionUiLink(gw string) string {
-	v := url.Values{}
-	v.Set("api_key", agentKeyAt("aionui", gw))
-	v.Set("base_url", gw+"/v1")
-	v.Set("name", magpieID)
-	v.Set("platform", "custom")
-	return AionUiScheme + v.Encode()
-}
 
 // aionuiDir is AionUi's Electron userData (~/Library/Application
 // Support/AionUi, %APPDATA%\AionUi, ~/.config/AionUi); its database is
@@ -105,13 +87,10 @@ func (s *aionuiStatus) read(path, gw string) (bool, bool) {
 
 func aionui() *Agent {
 	dir := aionuiDir()
-	db := filepath.Join(dir, "aionui", "aionui-backend.db")
-	st := &aionuiStatus{}
+
 	return &Agent{
 		ID: "aionui", Name: "AionUi", Icon: "aionui",
 		Dir: dir, Path: dir,
 		detect: func() bool { return dir != "" && isDir(filepath.Join(dir, "aionui")) },
-		Import: func() string { return AionUiLink(gateway.URL()) },
-		Added:  func() (bool, bool) { return st.read(db, gateway.URL()) },
 	}
 }

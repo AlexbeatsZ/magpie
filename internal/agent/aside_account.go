@@ -2,14 +2,11 @@ package agent
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/yetone/magpie/internal/edit"
 )
 
 // Aside keeps one folder per account, ~/.aside/u/<id>, each with its own
@@ -126,55 +123,4 @@ func asideChoice(at place) int {
 		return id
 	}
 	return 0
-}
-
-// asideAccountOptions are Aside's accounts to pick from; none while there
-// is only one (or the list can't be read) and none is picked, so the row
-// shows no choice where there is none to make.
-func asideAccountOptions(at place, cur string) []Option {
-	active, list, ok := asideAccounts(at)
-	if !ok || len(list) < 2 && cur == "" {
-		return nil
-	}
-	var out []Option
-	for _, a := range list {
-		who := a.Email
-		if who == "" {
-			who = "Local Account"
-		}
-		note := who
-		if a.ID == active {
-			note += " · active in Aside"
-		}
-		out = append(out, Option{Value: asideAccountName(a.ID), Label: asideAccountName(a.ID), Note: note})
-	}
-	return out
-}
-
-// pickAccount keeps the account picked on magpie; "" follows Aside's own
-// again. It changes nothing in Aside: each account's settings and what
-// magpie remembers of them stay with that account.
-func (c *asideConnection) pickAccount(v string) error {
-	asideMu.Lock()
-	defer asideMu.Unlock()
-	v = strings.TrimSpace(v)
-	if v == "" {
-		if err := os.Remove(asidePickPath()); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	raw, _ := json.Marshal(v)
-	id, ok := asideID(raw)
-	if !ok {
-		return fmt.Errorf("expected an Aside account such as u1, not %q", v)
-	}
-	if !c.at.isDir(asideAccountDir(c.at, id)) {
-		return fmt.Errorf("Aside has no account %s (no %s)", asideAccountName(id), asideAccountDir(c.at, id))
-	}
-	b, _ := json.Marshal(map[string]string{"account": asideAccountName(id)})
-	if err := os.MkdirAll(filepath.Dir(asidePickPath()), 0o700); err != nil {
-		return err
-	}
-	return edit.WriteAtomic(asidePickPath(), append(b, '\n'))
 }

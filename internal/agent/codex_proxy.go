@@ -1,16 +1,12 @@
 package agent
 
 import (
-	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"path"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/proc"
 )
@@ -65,157 +61,6 @@ func codexEnv(k string) string {
 	return os.Getenv(k)
 }
 
-// codexProxyFor is the proxy this machine's Codex, configured by the
-// config.toml at cfg, sends a request for base through, and where that
-// proxy is set ("HTTP_PROXY", "the system's proxy settings"); "" when it
-// goes straight there.
-func codexProxyFor(cfg, base string) (proxy, from string) {
-	u, err := url.Parse(base)
-	if err != nil || u.Hostname() == "" {
-		return "", ""
-	}
-	host := u.Hostname()
-	// env is the first of keys set, and which one it is: the detail names
-	// the variable the value is in, http_proxy or HTTP_PROXY (#2627)
-	env := func(keys ...string) (string, string) {
-		for _, k := range keys {
-			if v := strings.TrimSpace(codexProxyEnv(k)); v != "" {
-				return v, k
-			}
-		}
-		return "", ""
-	}
-	httpKeys := []string{"HTTP_PROXY", "http_proxy"}
-	if u.Scheme == "https" {
-		httpKeys = []string{"HTTPS_PROXY", "https_proxy"}
-	}
-	if f, _ := edit.GetTOMLTable(cfg, "features"); f["respect_system_proxy"] == "true" {
-		// the system's alone, its own bypass list deciding: with no proxy
-		// set there Codex goes direct, HTTP_PROXY or not (the environment's
-		// count only when the system can't be read; tried with codex-cli
-		// 0.162.1)
-		sys := codexSystemProxy()
-		if sys.URL == "" || systemBypassed(host, sys.Bypass) {
-			return "", ""
-		}
-		if codexProxyOS != "darwin" {
-			return sys.URL, systemProxyName()
-		}
-		// CFNetwork's answer for an http:// URL: the HTTP entry (the HTTPS
-		// one is for https:// alone); a SOCKS one Codex can't use, and
-		// takes HTTP_PROXY/ALL_PROXY instead (codex-rs outbound_proxy:
-		// UnsupportedProxyScheme, then resolve_env_proxy_route)
-		switch {
-		case sys.HTTP != "":
-			return sys.HTTP, systemProxyName()
-		case sys.SOCKS == "":
-			return "", ""
-		}
-		p, k := env(httpKeys...)
-		if p == "" {
-			p, k = env("ALL_PROXY", "all_proxy")
-		}
-		if no, _ := env("NO_PROXY", "no_proxy"); p == "" || reqwestNoProxy(host, no) {
-			return "", ""
-		}
-		return p, k
-	}
-	// reqwest's: each of the environment's first, the system's for
-	// http:// where it names none, then ALL_PROXY; NO_PROXY, or Windows'
-	// bypass list without it, goes around them
-	p, k := env(httpKeys...)
-	no, _ := env("NO_PROXY", "no_proxy")
-	sys := codexSystemProxy()
-	if p == "" && sys.HTTP != "" {
-		p, k = sys.HTTP, systemProxyName()
-	}
-	if p == "" {
-		p, k = env("ALL_PROXY", "all_proxy")
-	}
-	if no == "" && codexProxyOS == "windows" && sys.URL != "" {
-		no = strings.ReplaceAll(strings.Join(sys.Bypass, ","), "*.", "")
-	}
-	if p == "" || reqwestNoProxy(host, no) {
-		return "", ""
-	}
-	return p, k
-}
-
-func systemProxyName() string {
-	if codexProxyOS == "windows" {
-		return "Windows' proxy settings"
-	}
-	return "the system's proxy settings"
-}
-
-// reqwestNoProxy is hyper-util's NoProxy.contains: entries apart by commas;
-// an address is matched only by an IP or a CIDR that holds it, a name by
-// itself or a domain it is under; "*" matches every name, never an
-// address.
-func reqwestNoProxy(host, list string) bool {
-	host = strings.Trim(host, "[]")
-	ip := net.ParseIP(host)
-	for _, e := range strings.Split(list, ",") {
-		e = strings.TrimSpace(e)
-		if e == "" {
-			continue
-		}
-		if ip != nil {
-			if _, n, err := net.ParseCIDR(e); err == nil && n.Contains(ip) {
-				return true
-			}
-			if x := net.ParseIP(e); x != nil && x.Equal(ip) {
-				return true
-			}
-			continue
-		}
-		d := strings.TrimPrefix(e, ".")
-		if e == "*" || strings.EqualFold(host, d) || strings.HasSuffix(strings.ToLower(host), "."+strings.ToLower(d)) {
-			return true
-		}
-	}
-	return false
-}
-
-// systemBypassed is Codex's own match of a host against the system's bypass
-// list (codex-rs outbound_proxy/windows.rs): <local> is a name with no dot,
-// an entry with * a wildcard, any other the host itself or, with a leading
-// dot, a domain it is under.
-func systemBypassed(host string, bypass []string) bool {
-	host = strings.ToLower(strings.Trim(host, "[]"))
-	for _, e := range bypass {
-		e = strings.ToLower(strings.TrimSpace(e))
-		e = strings.TrimPrefix(strings.TrimPrefix(e, "http://"), "https://")
-		switch {
-		case e == "":
-		case e == "<local>":
-			if !strings.Contains(host, ".") {
-				return true
-			}
-		case e == "*":
-			return true
-		case strings.HasPrefix(e, "."):
-			if host == e[1:] || strings.HasSuffix(host, e) {
-				return true
-			}
-		case strings.Contains(e, "*"):
-			if ok, _ := path.Match(e, host); ok {
-				return true
-			}
-		case host == e:
-			return true
-		}
-	}
-	return false
-}
-
-// proxyProbe says whether a request for base sent through proxy is answered
-// by magpie: its gateway's GET / names it. A proxy's own 502, or anything
-// else that isn't magpie, is not. A socks proxy is asked as Codex asks it:
-// as an HTTP one at the same address, since its reqwest has no SOCKS. A var
-// for tests.
-var proxyProbe = realProxyProbe
-
 func realProxyProbe(base, proxy string) bool {
 	p, err := netproxy.Parse(proxy)
 	if err != nil {
@@ -230,26 +75,6 @@ func realProxyProbe(base, proxy string) bool {
 		return false
 	}
 	return answersAsMagpie(res)
-}
-
-// codexThroughProxy says whether Codex, configured by cfg, gets to the
-// gateway at base: true when it goes there directly, or through a proxy
-// that is known to pass its requests on. known is false while that proxy
-// hasn't been tried yet; a try is started then (see reachable).
-func codexThroughProxy(cfg, base string) (ok, known bool, proxy, from string) {
-	proxy, from = codexProxyFor(cfg, base)
-	if proxy == "" {
-		return true, true, "", ""
-	}
-	ok, known = probed("proxy "+proxy+" "+base, func() bool { return proxyProbe(base, proxy) })
-	return ok, known, proxy, from
-}
-
-// codexProxyOK is codexThroughProxy waited for: whether Codex gets to the
-// gateway at base, a proxy in its way tried now when it hasn't been.
-func codexProxyOK(cfg, base string) bool {
-	proxy, _ := codexProxyFor(cfg, base)
-	return proxy == "" || probedNow("proxy "+proxy+" "+base, func() bool { return proxyProbe(base, proxy) })
 }
 
 // codexProxiedDetail says what keeps Codex off magpie through proxy, and

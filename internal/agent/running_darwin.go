@@ -5,9 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/yetone/magpie/internal/proc"
+	"golang.org/x/sys/unix"
 )
 
 // listRunningNow lists the processes a pgrep -f pattern matches, each with

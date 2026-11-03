@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
-
 	"github.com/yetone/magpie/internal/proc"
 )
 

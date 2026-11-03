@@ -21,7 +21,7 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/library"
-	"github.com/yetone/magpie/internal/profile"
+
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/sessions"
 	"github.com/yetone/magpie/internal/settings"
@@ -173,21 +173,8 @@ func Run(ready func()) error {
 }
 
 func newModel() model {
-	// in the order the app lists them, those hidden there last
-	// an app magpie has no fields in (Cindy, which takes it by a link) has
-	// nothing to pick here, nor one whose CLI is gone, its folder left
-	// behind (#2177): nothing would read what is picked
-	var set []*agent.Agent
-	for _, a := range agent.Detected() {
-		if len(a.Fields) > 0 && !a.CLIMissing() {
-			set = append(set, a)
-		}
-	}
 	s := settings.Load()
-	shown, hidden := settings.Arrange(s, set, func(a *agent.Agent) string { return a.ID })
-	m := model{page: pageProviders, agents: append(shown, hidden...), hidden: len(shown), period: usage.Week, srange: 1, qleft: s.QuotaLeft}
-	// no model catalog yet: Init syncs it. Set here, as Init's receiver is
-	// a copy the program never sees.
+	m := model{page: pageProviders, period: usage.Week, srange: 1, qleft: s.QuotaLeft}
 	m.syncing = catalog.Source() == ""
 	m.reload()
 	return m
@@ -436,118 +423,10 @@ func (m model) pageKey(k string) (page, bool) {
 }
 
 func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.flash = ""
-	switch msg.String() {
-	case "q", "esc":
+	if msg.String() == "q" || msg.String() == "esc" {
 		return m, tea.Quit
-	case "j", "down":
-		m.row = (m.row + 1) % len(m.agents)
-		m.col = 0
-	case "k", "up":
-		m.row = (m.row + len(m.agents) - 1) % len(m.agents)
-		m.col = 0
-	case "l", "right", "tab":
-		m.col = (m.col + 1) % len(m.agents[m.row].Fields)
-	case "h", "left", "shift+tab":
-		n := len(m.agents[m.row].Fields)
-		m.col = (m.col + n - 1) % n
-	case "enter", " ":
-		m.openFieldPicker()
-	case "r":
-		m.reload()
-		m.flash, m.flashOK = "reloaded", true
-	case "S":
-		if !m.syncing {
-			m.syncing = true
-			return m, syncCmd
-		}
-	case "s":
-		m.mode = modeName
-		m.name = newInput("profile name")
-	case "p":
-		m.openProfiles()
 	}
 	return m, nil
-}
-
-func (m *model) openFieldPicker() {
-	a := m.agents[m.row]
-	f := a.Fields[m.col]
-	cur := m.values[m.row][f.Key]
-	items := a.Picks(f, m.values[m.row])
-	items = withCurrent(items, cur)
-	set := f.Set
-	label := a.Name + " · " + f.Label
-	m.pk = picker{
-		crumbs: []string{a.Name, f.Label},
-		input:  newInput("type to filter, or enter a custom value"),
-		items:  items,
-		relist: func() []agent.Option { return withCurrent(a.Picks(f, a.Values()), f.Get()) },
-		custom: true,
-		empty:  "no models known yet, type one",
-		onPick: func(v string) tea.Cmd {
-			return func() tea.Msg {
-				if err := set(v); err != nil {
-					return flashMsg{text: err.Error()}
-				}
-				return flashMsg{text: label + " → " + v, ok: true}
-			}
-		},
-	}
-	m.pk.refilter()
-	m.mode = modePick
-	m.back = modeList
-}
-
-func (m *model) openProfiles() {
-	ps, err := profile.Load()
-	if err != nil {
-		m.flash, m.flashOK = err.Error(), false
-		return
-	}
-	var items []agent.Option
-	detected := agent.Detected()
-	for _, n := range profile.Names(ps) {
-		note := profile.LongSummary(ps[n])
-		if profile.InUse(ps[n], detected, nil) {
-			note = strings.TrimSuffix("in use · "+note, " · ")
-		}
-		items = append(items, agent.Option{Value: n, Note: note})
-	}
-	m.pk = picker{
-		crumbs: []string{"profiles"},
-		input:  newInput("filter profiles"),
-		items:  items,
-		empty:  "no profiles yet · press s in the list to save one",
-		onPick: func(n string) tea.Cmd {
-			return func() tea.Msg {
-				ps, err := profile.Load()
-				if err != nil {
-					return flashMsg{text: err.Error()}
-				}
-				a, err := profile.Apply(ps[n])
-				if err != nil {
-					return flashMsg{text: err.Error()}
-				}
-				text := fmt.Sprintf("profile %s applied · %d change%s", n, a.Changed, plural(a.Changed))
-				for _, line := range profile.Report(a) {
-					text += " · " + line
-				}
-				return flashMsg{text: text, ok: a.Library == nil || len(a.Library.Problems) == 0}
-			}
-		},
-		onDel: func(n string) tea.Cmd {
-			return func() tea.Msg {
-				if err := profile.Delete(n); err != nil {
-					return flashMsg{text: err.Error()}
-				}
-				return flashMsg{text: "profile " + n + " deleted", ok: true}
-			}
-		},
-	}
-	m.pk.refilter()
-	m.mode = modeProfiles
-	m.back = modeList
 }
 
 func (m model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -605,30 +484,8 @@ func (m model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateName(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.mode = modeList
-		return m, nil
-	case "enter":
-		n := strings.TrimSpace(m.name.Value())
-		if n == "" {
-			return m, nil
-		}
-		m.mode = modeList
-		return m, func() tea.Msg {
-			p, err := profile.Snapshot()
-			if err != nil {
-				return flashMsg{text: err.Error()}
-			}
-			if err := profile.Save(n, p); err != nil {
-				return flashMsg{text: err.Error()}
-			}
-			return flashMsg{text: "saved profile " + n, ok: true}
-		}
-	}
-	var cmd tea.Cmd
-	m.name, cmd = m.name.Update(msg)
-	return m, cmd
+	m.mode = modeList
+	return m, nil
 }
 
 // ---- picker logic ----------------------------------------------------------
@@ -805,7 +662,7 @@ func (m model) View() string {
 		footer = hints("↑↓", "model / rule", "J K", "move", "a", "add model", "n", "new rule", "↵", "edit rule", "d", "take out", "esc", "back") + "\n" +
 			pad + hints("E", "effort", "F", "fast", "c", "classifier", "o", "routing", "s", "stays", "x", "context", "l", "levels", "f", "family", "R", "rename")
 	case modeName:
-		body = m.viewName()
+		body = m.viewProviders()
 		footer = hints("↵", "save", "esc", "cancel")
 	}
 
@@ -964,24 +821,6 @@ func (m model) viewPicker() string {
 		b.WriteString("\n" + pad + "  " + sFaint.Render(fmt.Sprintf("%d–%d of %d", start+1, end, len(p.match))))
 	}
 	return b.String()
-}
-
-func (m model) viewName() string {
-	var b strings.Builder
-	b.WriteString(m.header("save profile"))
-	b.WriteString("\n\n")
-	b.WriteString(pad + sCursor.Render("❯ ") + m.name.View())
-	b.WriteString("\n\n")
-	b.WriteString(pad + "  " + sMuted.Render("snapshots every agent's current settings"))
-	b.WriteString("\n\n")
-	snap, _ := profile.Snapshot()
-	for _, k := range sortedKeys(snap.Fields) {
-		b.WriteString(pad + "  " + sFaint.Render(padRight(k, 18)) + sText.Render(snap.Fields[k]) + "\n")
-	}
-	if snap.Library != nil {
-		b.WriteString(pad + "  " + sFaint.Render(padRight("library", 18)) + sText.Render(strings.TrimPrefix(snap.Library.Summary(), "library: ")) + "\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 func hints(kv ...string) string {

@@ -1,5 +1,5 @@
-// Package agent describes every coding agent magpie can drive: where its config
-// lives, which fields matter (model, effort, …) and which values to offer.
+// Package agent owns resource inventory, installation detection and read-only
+// gateway client attribution. Legacy model operations are disabled in this fork.
 package agent
 
 import (
@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/provider"
 )
@@ -757,28 +756,4 @@ func (a *Agent) split(v string) (model, suffix string, one bool) {
 		return v, "", true
 	}
 	return a.SplitSuffix(v)
-}
-
-// atomic makes each of an agent's field sets, and its Sync, one edit of the
-// files at paths: one that fails part way puts them all back as they were,
-// rather than leaving, say, Codex's config.toml with magpie's provider table
-// written but its model not (#253).
-func atomic(a *Agent, paths ...string) *Agent {
-	for i := range a.Fields {
-		if set := a.Fields[i].Set; set != nil {
-			a.Fields[i].Set = func(v string) error {
-				return edit.Atomically(func() error { return set(v) }, paths...)
-			}
-		}
-	}
-	if sync := a.Sync; sync != nil {
-		a.Sync = func() error { return edit.Atomically(sync, paths...) }
-	}
-	if follow := a.Follow; follow != nil {
-		a.Follow = func() error { return edit.Atomically(follow, paths...) }
-	}
-	if unwire := a.Unwire; unwire != nil {
-		a.Unwire = func() error { return edit.Atomically(unwire, paths...) }
-	}
-	return a
 }

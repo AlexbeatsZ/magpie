@@ -43,11 +43,9 @@ package agent
 // magpie's key. Not with a JetBrains IDE's own window.
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 
-	"github.com/tidwall/gjson"
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/edit"
 )
@@ -115,7 +113,7 @@ func copilotJBInstalled(home string) bool {
 
 func copilotJetBrainsAt(path string, installed func() bool) *Agent {
 	wired := func() bool { _, ok := edit.GetJSON(path, copilotJBConfig); return ok }
-	return atomic(&Agent{
+	return &Agent{
 		ID: copilotJBID, Name: "Copilot (JetBrains)", Icon: "githubcopilot",
 		Aliases: []string{"jetbrains", "jetbrains-copilot", "copilot-idea", "copilot-intellij", "intellij", "idea"},
 		Dir:     filepath.Dir(path), Path: path,
@@ -123,130 +121,5 @@ func copilotJetBrainsAt(path string, installed func() bool) *Agent {
 		// plugin installed in an IDE, or magpie's provider written, says
 		// it is here
 		detect: func() bool { return installed() || wired() },
-		Notice: func() string {
-			if !wired() {
-				return ""
-			}
-			return noticeCopilotjetbrains.String()
-		},
-		Sync: func() error {
-			if !wired() {
-				return nil
-			}
-			return copilotJBWrite(path)
-		},
-		Check: func() string {
-			if !wired() {
-				return ""
-			}
-			// every model at the gateway: the first that isn't, if any (none
-			// listed while the catalog is empty)
-			raw, _ := edit.GetJSON(path, copilotJBModels)
-			url := vscodeURL()
-			for _, m := range gjson.Parse(raw).Map() {
-				if url = m.Get("deploymentUrl").String(); url != vscodeURL() {
-					break
-				}
-			}
-			return wiringOff("Copilot (JetBrains)", path, func(k string) (string, bool) {
-				if k == "deploymentUrl" {
-					return url, url != ""
-				}
-				return edit.GetJSON(path, k)
-			}, "deploymentUrl", vscodeURL(), copilotJBKey, agentKey(copilotJBID))
-		},
-		// its picker lists the models picked for it (#1508)
-		ListsModels: true,
-		Fields: []Field{{
-			Key: "provider", Label: "provider",
-			Get: func() string {
-				if wired() {
-					return magpieID
-				}
-				return ""
-			},
-			Set: func(v string) error {
-				if v == "" {
-					return edit.DelJSON(path, copilotJBConfig, copilotJBKey, copilotJBModels)
-				}
-				return copilotJBWrite(path)
-			},
-			Options: func(map[string]string) []Option {
-				return []Option{{Value: magpieID, Label: "magpie", Icon: "magpie", Note: "every magpie model in Copilot Chat's model picker"}}
-			},
-		}},
-	}, path)
+	}
 }
-
-// copilotJBWrite writes magpie's provider into byok.json, made private as
-// the language server makes it when there is none. A model of magpie's the
-// user hid in the IDE's Manage Models stays hidden.
-func copilotJBWrite(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
-			return err
-		}
-	}
-	hidden := map[string]bool{}
-	if raw, ok := edit.GetJSON(path, copilotJBModels); ok {
-		for id, m := range gjson.Parse(raw).Map() {
-			if r := m.Get("isRegistered"); r.Exists() && !r.Bool() {
-				hidden[id] = true
-			}
-		}
-	}
-	models := copilotJBModelsJSON(hidden)
-	kvs := []edit.KV{
-		{Path: copilotJBConfig, Value: map[string]string{"groupName": magpieID, "apiType": "chatCompletions"}},
-		{Path: copilotJBKey, Value: agentKey(copilotJBID)},
-		{Path: copilotJBModels, Value: models},
-	}
-	// written only where it differs, so a sync with nothing new leaves the
-	// file as the server last wrote it
-	var set []edit.KV
-	for _, kv := range kvs {
-		if cur, ok := edit.GetJSON(path, kv.Path); !ok || !sameJSON(cur, kv.Value) {
-			set = append(set, kv)
-		}
-	}
-	if len(set) == 0 {
-		return nil
-	}
-	return edit.SetJSON(path, set...)
-}
-
-// copilotJBModelsJSON is magpie's models-config: the catalog as Copilot
-// (JetBrains) is shown it, keyed by model id.
-func copilotJBModelsJSON(hidden map[string]bool) map[string]any {
-	out := map[string]any{}
-	for _, m := range sharedModels(copilotJBID) {
-		context := m.Context
-		if context == 0 {
-			context = 128000 // the server's own default for a custom endpoint
-		}
-		// the output is reserved out of the window the prompt fills
-		output := maxTokens(m)
-		if output <= 0 {
-			output = 16000
-		}
-		output = outputOr(m, min(output, context/4))
-		out[m.ID] = map[string]any{
-			"deploymentUrl": vscodeURL(),
-			"isRegistered":  !hidden[m.ID],
-			"isCustomModel": true,
-			"modelCapabilities": map[string]any{
-				"name": m.Name, "maxInputTokens": context, "maxOutputTokens": output,
-				"toolCalling": true, "vision": m.Images,
-			},
-		}
-	}
-	return out
-}
-
-// what copilotjetbrains says after a change (notice.go)
-var (
-	noticeCopilotjetbrains = newNotice("magpie's models are in Copilot Chat's model picker in your JetBrains IDE, under magpie, once the IDE restarts. They need Copilot signed in to GitHub on a plan with Bring Your Own Key: Copilot Free, Pro and Pro+ have it, Business and Enterprise when the organisation's policy allows it.")
-)

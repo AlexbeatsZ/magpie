@@ -9,6 +9,14 @@ three.
 
 ## Portable data in this fork
 
+The Windows fork release is built by
+[`build/windows/release.ps1`](../../build/windows/release.ps1). It requires an
+empty output folder, stamps the version, embeds the console launcher and removes
+generated build inputs in `finally`. The zip contains only the application and
+licenses. The separate EXE and update/notes JSON use the existing updater format.
+The release workflow publishes directly to this repository without upstream
+signing/dispatch secrets. Preview releases do not advance GitHub's stable feed.
+
 This fork always uses portable storage. The single owner is
 [appdir.Portable and Resolve](../../internal/appdir/appdir.go): startup resolves
 the executable once and uses its adjacent data directory, without checking

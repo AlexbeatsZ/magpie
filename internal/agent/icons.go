@@ -27,21 +27,6 @@ var byFamily = []struct{ prefix, icon string }{
 	{"step", "stepfun-color"},
 }
 
-// providerIcon is the logo of a models.dev provider itself, which for one
-// serving other vendors' models (GitHub Copilot) is none of theirs.
-func providerIcon(catalogID string) string {
-	if ic := provider.IconForCatalog(catalogID); ic != "" {
-		return ic
-	}
-	switch catalogID {
-	case "github-copilot":
-		return "githubcopilot"
-	case "openai-codex": // Pi's and omp's ChatGPT sign-in
-		return providerIcon("openai")
-	}
-	return ""
-}
-
 // modelIcon names the bundled logo for a model, given the models.dev
 // provider it came from (may be empty) and its id.
 func modelIcon(catalogID, modelID string) string {

@@ -10,6 +10,13 @@ import (
 	"github.com/yetone/magpie/internal/autostart"
 )
 
+type importWindows struct {
+	Windows
+	opened string
+}
+
+func (w *importWindows) OpenURL(u string) error { w.opened = u; return nil }
+
 // Open at login switched off in System Settings, its launch agent still
 // there, reads as needing to be allowed, not as on (#2120, Anoninz): the
 // row says so and opens Login Items, the one System Settings pane the page

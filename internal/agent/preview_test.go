@@ -2,8 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -95,28 +93,5 @@ func TestElapsed(t *testing.T) {
 		if _, ok := elapsed(in); ok {
 			t.Errorf("elapsed(%q) read", in)
 		}
-	}
-}
-
-// The process that disconnects on a copy takes as magpie's the providers
-// the magpie asking has on, also those it reads from another agent's
-// sign-in the copy doesn't hold (Codex's auth.json on Windows): a Claude Code
-// on codex/… had an empty preview.
-func TestDryRunKnowsTheAskersProviders(t *testing.T) {
-	t.Cleanup(func() {
-		dryProviders = nil
-		disconnectDryRun = false
-	})
-	if isMagpie("elsewhere/gpt-x") {
-		t.Fatal("an unknown provider's model is magpie's")
-	}
-	p := filepath.Join(t.TempDir(), dryProvidersFile)
-	if err := os.WriteFile(p, []byte("elsewhere\nother"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(dryProvidersVar, p)
-	_ = DryRun("no-such-agent")
-	if !isMagpie("elsewhere/gpt-x") || isMagpie("third/gpt-x") || isMagpie("elsewhere") {
-		t.Fatalf("held %v", dryProviders)
 	}
 }

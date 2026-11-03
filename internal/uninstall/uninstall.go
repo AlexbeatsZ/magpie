@@ -1,17 +1,5 @@
-// Package uninstall takes magpie off this computer: `magpie uninstall` and
-// Settings › Uninstall magpie.
-//
-// Jevik_AI on X deleted magpie's folders by hand, and Codex's config.toml
-// kept openai_base_url on 127.0.0.1:3425: every Codex turn failed with a
-// 502, with nothing left that knew why. Deleting magpie's files never puts
-// an agent back, so uninstalling does that first, the way each agent's
-// Disconnect does (what magpie changed goes back, what the user changed
-// by hand since stays theirs), then removes what magpie registered with
-// the system, then its own files.
-//
-// What it leaves: the magpie executable itself (a running program can't
-// delete itself everywhere, and the user put it there), and the Library's
-// folder while it holds skills or servers the user's agents use.
+// Package uninstall removes Magpie's integrations and data. Agent configuration,
+// native sessions and client processes remain under their own owners.
 package uninstall
 
 import (
@@ -34,7 +22,6 @@ import (
 	"github.com/yetone/magpie/internal/library"
 	"github.com/yetone/magpie/internal/pii"
 	"github.com/yetone/magpie/internal/proc"
-	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/shortcut"
 	"github.com/yetone/magpie/internal/update"
 )
@@ -73,11 +60,7 @@ func (r *Report) Failed() bool {
 
 // what Run asks of the system; the tests put fakes in
 var (
-	agents          = agent.All
-	endFailover     = agent.EndCodexFailover
-	portRollouts    = agent.PortCodexRollouts
-	restartCodexApp = provider.RestartCodexAppWhenIdle
-	removeService   = func() error {
+	removeService = func() error {
 		err := daemon.Uninstall()
 		if errors.Is(err, daemon.ErrUnsupported) {
 			return nil
@@ -89,65 +72,17 @@ var (
 	removeScheme   = unregisterScheme
 	endPII         = pii.Remove
 	executable     = os.Executable
-	wired          = (*agent.Agent).Wired
-	disconnectOne  = disconnect
 )
-
-// codexAppWait is how long Run waits for a running Codex turn to end
-// before it restarts the Codex app's app-server.
-var codexAppWait = 30 * time.Second
 
 // Connected are the agents magpie is in now, which Run disconnects.
 func Connected() []*agent.Agent {
-	var out []*agent.Agent
-	for _, a := range agents() {
-		if wired(a) {
-			out = append(out, a)
-		}
-	}
-	return out
+	return nil
 }
 
-// Agents disconnects every agent magpie is in: the first half of
-// uninstalling, which the app does while it still runs.
+// Agents retains the uninstall protocol without taking over agent configuration.
 func Agents(ctx context.Context, r *Report) {
-	// failover first: it is a provider in Codex's config too
-	if _, err := endFailover(); err != nil {
-		r.Agents = append(r.Agents, Done{What: "Codex account failover", Err: err.Error()})
-	}
-	codex := false
-	for _, a := range Connected() {
-		err := disconnectOne(a)
-		d := Done{What: a.Name}
-		if err != nil {
-			d.Err = err.Error()
-		}
-		r.Agents = append(r.Agents, d)
-		codex = codex || a.ID == "codex"
-	}
-	// the threads Codex ran on magpie's models open without magpie
-	portRollouts(10 * time.Second)
-	if codex {
-		// the Codex app read the old config as its app-server started
-		if _, left, err := restartCodexApp(ctx, codexAppWait); left || err != nil {
-			r.CodexApp = true
-		}
-	}
-}
+	// Model setup, native sessions and application processes belong to their agents.
 
-// disconnect is the Agents page's Disconnect, and for an app whose
-// settings can't be read while it is closed, its offline disconnect.
-func disconnect(a *agent.Agent) error {
-	err := a.Disconnect()
-	var off *agent.RuntimeUnavailableError
-	if errors.As(err, &off) && off.Offline == agent.OfflineDisconnect && a.Native != nil && a.Native.ExecuteOffline != nil {
-		plan, perr := a.Native.Disconnect()
-		if perr != nil {
-			return perr
-		}
-		return a.Native.ExecuteOffline(plan)
-	}
-	return err
 }
 
 // System removes what magpie registered with the system: its background

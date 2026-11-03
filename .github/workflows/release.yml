@@ -1,127 +1,52 @@
 name: Release
 
-# Pushing a v* tag hands off to yetone/magpie-releases, which builds, signs,
-# notarises and publishes magpie there; that repo is where people download
-# from, and the signing secrets live only there. Once its release has every
-# asset, the same release is copied here, so this repo's Releases page has
-# the installers too (PapainTea on X). Self-update, install.sh and the site
-# still read magpie-releases only.
-
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 0.1.0 — no v prefix; the v tag must exist)'
+        description: 'Fork version, without v (for example 0.1.0-meta.2)'
         required: true
         type: string
+      prerelease:
+        description: 'Publish as a preview until full upstream platform acceptance is complete'
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
-  trigger-release:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      ref: ${{ steps.version.outputs.ref }}
-
+  windows:
+    runs-on: windows-latest
     steps:
-      - name: Get version
-        id: version
-        env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            REF="$GITHUB_REF_NAME"
-            VERSION="${REF#v}"
-          else
-            VERSION="$INPUT_VERSION"
-            REF="v$INPUT_VERSION"
-          fi
-          # a newline or quote would add outputs or break the JSON below
-          [[ "$VERSION" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || { echo "bad version: $VERSION" >&2; exit 1; }
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "ref=$REF" >> $GITHUB_OUTPUT
-          echo "Triggering release for version: $VERSION (ref: $REF)"
-
-      - name: Trigger release workflow in magpie-releases
-        uses: peter-evans/repository-dispatch@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          # PAT with contents write on yetone/magpie-releases.
-          token: ${{ secrets.RELEASES_REPO_TOKEN }}
-          repository: yetone/magpie-releases
-          event-type: release
-          client-payload: '{"ref": "${{ steps.version.outputs.ref }}", "version": "${{ steps.version.outputs.version }}"}'
-
-      - name: Output status
-        run: echo "Watch the build at https://github.com/yetone/magpie-releases/actions"
-
-  mirror-release:
-    needs: trigger-release
-    runs-on: ubuntu-latest
-    # magpie-releases' macOS jobs can wait an hour or more for a hosted
-    # runner when several tags queue: v0.1.2262 published 62 minutes after
-    # its tag, two minutes after a 60-minute wait here gave up, and it was
-    # never copied here (#4488)
-    timeout-minutes: 330
-    permissions:
-      contents: write
-      issues: write # to say a release went out without Chinese notes
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      REF: ${{ needs.trigger-release.outputs.ref }}
-      ASSETS: 16 # what every release carries; a smaller count is still uploading
-    steps:
-      - name: Wait for magpie-releases to publish every asset
+          go-version-file: go.mod
+      - name: Check fork boundaries
+        shell: pwsh
         run: |
-          for i in $(seq 1 600); do
-            n=$(gh release view "$REF" -R yetone/magpie-releases --json assets -q '.assets | length' 2>/dev/null || echo 0)
-            echo "attempt $i: $n of $ASSETS assets"
-            [ "$n" -ge "$ASSETS" ] && exit 0
-            sleep 30
-          done
-          echo "magpie-releases never published $REF with $ASSETS assets" >&2
-          exit 1
-
-      - name: Copy the release here
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          gh release download "$REF" -R yetone/magpie-releases -D dist
-          gh release view "$REF" -R yetone/magpie-releases --json body -q .body > notes.md
-          printf '\n\n---\nThe same release, and the feed magpie updates from: https://github.com/yetone/magpie-releases/releases/tag/%s\n' "$REF" >> notes.md
-          if gh release view "$REF" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$REF" -R "$GITHUB_REPOSITORY" --notes-file notes.md
-            gh release upload "$REF" dist/* -R "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$REF" dist/* -R "$GITHUB_REPOSITORY" --verify-tag --title "magpie $REF" --notes-file notes.md
-          fi
-          n=$(gh release view "$REF" -R "$GITHUB_REPOSITORY" --json assets -q '.assets | length')
-          echo "$REF has $n assets here"
-          [ "$n" -ge "$ASSETS" ]
-
-      # The Chinese notes are written by magpie-releases' DeepSeek call, and
-      # when that call fails the release goes out in English alone: a spent
-      # balance did so for v0.1.1233 to v0.1.1242, and Chinese apps showed
-      # English for a day until a user said so (#2122). Its warning is in a
-      # log nobody reads, so a release without them is said here, on one
-      # open issue. magpie-releases' notes.yml writes them again each hour
-      # once DeepSeek answers (it didn't for v0.1.2634 to 2646, a spent
-      # balance again), and notes-mirror.yml copies them here.
-      - name: Say when the notes have no Chinese
+          go vet -tags nogui ./...
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go test -tags nogui ./internal/agent ./internal/profile ./internal/uninstall ./internal/gui ./internal/sessions ./internal/backup ./internal/davsync ./internal/cli ./internal/tui ./internal/update -run 'Test(GatewayOnly|ResourceManagement|ResourceRegistry|HistoryReference|Legacy|SyncPreservesManual|RunOrder|RunSaysWhatFailed|ZeroedProfiles)'
+          exit $LASTEXITCODE
+      - name: Build portable desktop
+        shell: pwsh
         env:
-          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: ./build/windows/release.ps1 -Version $env:RELEASE_VERSION -OutDir "$pwd/dist" -NotesFile "$pwd/docs/releases/windows-fork.md"
+      - name: Publish on this fork
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          PREVIEW: ${{ inputs.prerelease }}
         run: |
-          set -uo pipefail
-          if grep -qF '<!-- lang:zh -->' notes.md; then
-            echo "$REF has Chinese notes"
-            exit 0
-          fi
-          title="Release notes without Chinese"
-          msg="$REF went out with English notes alone: magpie-releases' release run got no Chinese from DeepSeek. Its reason is the \`DeepSeek wrote no Chinese notes\` warning in that run's Generate changelog step (https://github.com/yetone/magpie-releases/actions); \`insufficient_balance_error\` means the DEEPSEEK_API_KEY account needs a top-up. Until then apps set to Chinese show its commit subjects (#2122). magpie-releases' notes.yml writes the notes again each hour once DeepSeek answers, and notes-mirror.yml copies them here; notes written by hand below a \`<!-- lang:zh -->\` marker are kept."
-          n=$(gh issue list --state open --search "\"$title\" in:title" --json number,title -q ".[] | select(.title == \"$title\") | .number" | head -1) || n=""
-          if [ -n "$n" ]; then
-            gh issue comment "$n" --body "$msg" || echo "::warning::could not comment on #$n: $msg"
-          else
-            gh issue create --title "$title" --body "$msg" || echo "::warning::could not file an issue: $msg"
-          fi
+          $flags = @('--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--notes-file', 'docs/releases/windows-fork.md', '--title', "Magpie $env:RELEASE_VERSION")
+          if ($env:PREVIEW -eq 'true') { $flags += '--prerelease' }
+          gh release create "v$env:RELEASE_VERSION" dist/magpie-windows-amd64.zip dist/magpie-windows-amd64.exe dist/update.json dist/notes.json @flags
+          exit $LASTEXITCODE

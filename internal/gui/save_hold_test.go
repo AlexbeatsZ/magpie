@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
+
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,69 +116,4 @@ func clip(s string) string {
 		return s[:400]
 	}
 	return s
-}
-
-// An agent's own field written by a POST — which does not touch the catalog
-// (agent.Apply) — is in the answer that POST returns as well: what the
-// middleware holds is dropped by the write, and what the agent's files are
-// read through (filememo) is looked at again.
-func TestAgentWriteAnsweredAsWritten(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
-	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte("model = \"gpt-5.4\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := provider.Save(provider.Provider{ID: "relay", Name: "Relay", Key: "k",
-		Chat: "http://127.0.0.1:1/v1", Models: []string{"m1"}}); err != nil {
-		t.Fatal(err)
-	}
-	h := Handler(nil, nil)
-	call := func(path, body string) stateJSON {
-		t.Helper()
-		method := http.MethodPost
-		if body == "" {
-			method = http.MethodGet
-		}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body)
-		}
-		var s stateJSON
-		if err := json.Unmarshal(rec.Body.Bytes(), &s); err != nil {
-			t.Fatalf("%s: not the state: %v", path, err)
-		}
-		return s
-	}
-	codex := func(s stateJSON) agentJSON {
-		t.Helper()
-		for _, a := range s.Agents {
-			if a.ID == "codex" {
-				return a
-			}
-		}
-		t.Fatalf("no codex in %+v", s.Agents)
-		return agentJSON{}
-	}
-	// a read first, as the page makes before it writes
-	call("/api/state", "")
-	if codex(call("/api/state", "")).Wired {
-		t.Fatal("wired before magpie set anything")
-	}
-	if !codex(call("/api/set", `{"agent":"codex","field":"model","value":"relay/m1"}`)).Wired {
-		t.Fatal("the answer to the write is stale: not wired")
-	}
-	if !codex(call("/api/state", "")).Wired {
-		t.Fatal("not wired on the read after")
-	}
-	if codex(call("/api/set", `{"agent":"codex","field":"model","value":"gpt-5.4"}`)).Wired {
-		t.Fatal("the answer to the unwiring write is stale: still wired")
-	}
 }

@@ -5,8 +5,17 @@ import (
 	"testing"
 )
 
+func TestResourceRegistryBuildsReadOnlyDescriptors(t *testing.T) {
+	home, cfg := homes()
+	for _, a := range onMachine(home, cfg) {
+		if len(a.Fields) != 0 || a.Native != nil || a.Sync != nil || a.Follow != nil || a.Routed != nil || a.Unwire != nil {
+			t.Fatalf("registry constructed model integration hooks for %s", a.ID)
+		}
+	}
+}
+
 func TestGatewayOnlyHasNoConfigWriters(t *testing.T) {
-	if len(All()) != 0 || len(Detected()) != 0 || len(local()) != 0 {
+	if len(All()) != 0 || len(Detected()) != 0 {
 		t.Fatal("gateway exposes another program's configuration")
 	}
 	for _, a := range Inventory() {

@@ -2,10 +2,6 @@ package agent
 
 import (
 	"regexp"
-	"slices"
-	"strings"
-
-	"github.com/yetone/magpie/internal/provider"
 )
 
 // A provider switched off or removed, or the last account of a sign-in
@@ -50,74 +46,4 @@ func Reseat(change func() error) ([]Move, error) {
 	return nil, change()
 }
 
-// served: magpie takes requests for the catalog model.
-func served(ref string) bool {
-	_, _, ok := provider.Resolve(ref)
-	return ok
-}
-
-// sameModel is the option for ref's model from another provider still
-// serving it: the same id, else one that differs only in how it is spelt
-// (claude-sonnet-4.5 and claude-sonnet-4-5-20250929). For a group magpie
-// found (group/auto-…), gone as found groups are turned off, a provider
-// is kept out of them, or its model is down to one provider magpie has, it
-// is that model from the first provider still serving it; none for any other routing group, which is
-// nobody else's.
-func sameModel(opts []Option, ref string) Option {
-	// a group's id carries Claude Code's [1m] mark as a model's does, and
-	// this ref comes from the agent's own settings
-	if gid, ok := provider.GroupIDOf(ref); ok {
-		if !strings.HasPrefix(gid, "auto-") {
-			return Option{}
-		}
-		// a provider the user keeps out of found groups last
-		// (provider.SetAutoGroupSkip): skipping it is what took the group
-		skip := provider.AutoGroupSkip()
-		var kept Option
-		for _, o := range opts {
-			if o.Ref == "" || provider.IsGroupRef(o.Ref) || !served(o.Ref) {
-				continue
-			}
-			pid, m, _ := strings.Cut(o.Ref, "/")
-			if provider.AutoGroupOf(pid, m) != gid {
-				continue
-			}
-			if !slices.Contains(skip, pid) {
-				return o
-			}
-			if kept.Ref == "" {
-				kept = o
-			}
-		}
-		return kept
-	}
-	pid, model, ok := strings.Cut(ref, "/")
-	if !ok || pid+"/" == provider.GroupPrefix {
-		return Option{}
-	}
-	want := modelKey(model)
-	var alike Option
-	for _, o := range opts {
-		if o.Ref == "" || provider.IsGroupRef(o.Ref) || !served(o.Ref) {
-			continue
-		}
-		_, m, _ := strings.Cut(o.Ref, "/")
-		if m == model {
-			return o
-		}
-		if alike.Ref == "" && modelKey(m) == want {
-			alike = o
-		}
-	}
-	return alike
-}
-
 var dated = regexp.MustCompile(`-(\d{8}|\d{4}-\d{2}-\d{2})$`)
-
-// modelKey is a model id as providers agree on it: its last part, lower
-// case, with dots and underscores as dashes and no date.
-func modelKey(m string) string {
-	m = strings.ToLower(m[strings.LastIndex(m, "/")+1:])
-	m = strings.NewReplacer(".", "-", "_", "-").Replace(m)
-	return dated.ReplaceAllString(m, "")
-}

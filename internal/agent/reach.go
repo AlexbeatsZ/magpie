@@ -45,11 +45,6 @@ func realReachProbe(base string) bool {
 	return true
 }
 
-// magpieProbe says whether base answers as a magpie gateway: GET base/ is
-// 200 with {"name":"magpie"} (the gateway's info), as it is through a
-// reverse proxy that forwards base to it. A var for tests.
-var magpieProbe = realMagpieProbe
-
 func realMagpieProbe(base string) bool {
 	c := &http.Client{Timeout: 3 * time.Second}
 	res, err := c.Get(strings.TrimSuffix(base, "/") + "/")
@@ -66,86 +61,6 @@ func answersAsMagpie(res *http.Response) bool {
 		Name string `json:"name"`
 	}
 	return res.StatusCode == http.StatusOK && json.NewDecoder(res.Body).Decode(&info) == nil && info.Name == "magpie"
-}
-
-// magpieAt is whether base answers as magpie (magpieProbe), and whether
-// that is known yet: the last probe's answer, a new one started in the
-// background as reachable does, never waited for. A var for tests, which
-// are told no without a probe.
-var magpieAt = func(base string) (ok, known bool) {
-	return probed("magpie "+base, func() bool { return magpieProbe(base) })
-}
-
-// proxyBase is v, the address an agent's config names where magpie wrote
-// want, with want's path (/v1 where want has it) cut off its end, when
-// that can be another way to magpie: a URL on another machine or a name,
-// such as a company's reverse proxy in front of the gateway (davisjiahao,
-// #1985: https://ai.corp.example/magpie forwarding to 127.0.0.1:3425), or
-// one on this machine's loopback with a path of its own before magpie's (a
-// compliance proxy's http://127.0.0.1:8788/claude-code-anthropic/<route>).
-// One on loopback with none is magpie's own on an older port, never
-// another way to it.
-func proxyBase(v, want string) (string, bool) {
-	w, err := url.Parse(want)
-	if err != nil || (w.Scheme != "http" && w.Scheme != "https") || w.Host == "" {
-		return "", false
-	}
-	base, ok := strings.CutSuffix(strings.TrimSuffix(strings.TrimSpace(v), "/"), strings.TrimSuffix(w.Path, "/"))
-	if !ok || !onAnotherMachine(base) && !loopbackWithPath(base) {
-		return "", false
-	}
-	if u, err := url.Parse(base); err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", false
-	}
-	return base, true
-}
-
-// loopbackWithPath says base is an http(s) address on this machine's
-// loopback with a path: a local proxy's route, never the gateway's own
-// address, which has none.
-func loopbackWithPath(base string) bool {
-	u, err := url.Parse(base)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || onAnotherMachine(base) {
-		return false
-	}
-	return strings.Trim(u.Path, "/") != ""
-}
-
-// reachesMagpie says v reaches magpie another way (proxyBase) whose root
-// answers as magpie. Until it has been tried it is taken as reaching
-// magpie, as an address not yet tried isn't unreachable either: telling
-// drift first would offer Reconnect, which writes the proxy away.
-func reachesMagpie(v, want string) bool {
-	base, ok := proxyBase(v, want)
-	if !ok {
-		return false
-	}
-	ok, known := magpieAt(base)
-	return ok || !known
-}
-
-// surelyMagpie is reachesMagpie once magpie has answered there: what a
-// write that keeps the address waits for (magpieAsked), so a relay not yet
-// tried never gets magpie's model or key.
-func surelyMagpie(v, want string) bool {
-	base, ok := proxyBase(v, want)
-	if !ok {
-		return false
-	}
-	ok, known := magpieAt(base)
-	return ok && known
-}
-
-// magpieAsked is magpieAt waited for, for a write: base, not asked yet, is
-// asked now (probedNow, as codexProxyOK asks a proxy), so what the write
-// reads after is magpie's answer there. Unasked, surelyMagpie is no, and
-// the first write in a magpie just started, the CLI's, took a proxy to
-// magpie for the user's own endpoint (#1985). One answered before, at any
-// age, is what the write goes by, as the reads do.
-func magpieAsked(base string) {
-	if _, known := magpieAt(base); !known {
-		probedNow("magpie "+base, func() bool { return magpieProbe(base) })
-	}
 }
 
 var reach struct {
@@ -187,25 +102,6 @@ func probed(key string, probe func() bool) (ok, known bool) {
 		}()
 	}
 	return a.ok, !a.at.IsZero()
-}
-
-// probedNow is probed waited for: the last answer while it is fresh, else
-// one asked now, which the next probed of key gets too.
-func probedNow(key string, probe func() bool) bool {
-	reach.Lock()
-	a := reach.m[key]
-	reach.Unlock()
-	if !a.at.IsZero() && time.Since(a.at) <= reachAge {
-		return a.ok
-	}
-	ok := probe()
-	reach.Lock()
-	if reach.m == nil {
-		reach.m = map[string]reachAnswer{}
-	}
-	reach.m[key] = reachAnswer{at: time.Now(), ok: ok}
-	reach.Unlock()
-	return ok
 }
 
 // offLoopback: base is an http(s) address on a host other than this

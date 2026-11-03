@@ -15,7 +15,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -72,7 +71,7 @@ func fakeCodex(t *testing.T, h string) (down string) {
 // Providers page (#1789, reyoung: Routing offered cursor/auto alone, from
 // Cursor's built-in, since retired; Codex's ChatGPT account stands in).
 func TestTUIFetchesSubscriptionModels(t *testing.T) {
-	for _, view := range []string{"routing", "routing with catalog sync", "routing with catalog sync last", "provider", "classifier", "agent"} {
+	for _, view := range []string{"routing", "routing with catalog sync", "routing with catalog sync last", "provider", "classifier"} {
 		t.Run(view, func(t *testing.T) {
 			fakeCodex(t, home(t))
 			m := model{w: 120, h: 40, syncing: strings.Contains(view, "sync")}
@@ -148,18 +147,6 @@ func openModelPicker(t *testing.T, m model, view string) (model, string) {
 	case "classifier":
 		m.page = pageGroups
 		m.openClassifier(provider.Group{ID: "test", Name: "Test"})
-	case "agent":
-		a, err := agent.Find("codex")
-		if err != nil {
-			t.Fatal(err)
-		}
-		m.agents = []*agent.Agent{a}
-		m.reload()
-		m.openFieldPicker()
-		// Codex has no list of its own here (no models_cache.json), so the
-		// models magpie serves on its ChatGPT account are offered via magpie
-		// (codexViaMagpieFor)
-		return m, "codex/gpt-6-luna"
 	default:
 		m.page = pageGroups
 		m.openMemberPicker(pickMsg{newGroup: "Test"})

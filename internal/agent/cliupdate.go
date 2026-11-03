@@ -905,42 +905,6 @@ func (a *Agent) InstalledVersion() string {
 	return installedVersion(real)
 }
 
-// CLIs is every detected agent's CLI, as far as it is known within wait;
-// pending says some are still being asked, and will be ready next time.
-func CLIs(wait time.Duration) (out map[string]CLI, pending bool) {
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	out = map[string]CLI{}
-	for _, a := range Detected() {
-		if _, ok := cliSpecs[a.ID]; !ok || a.WSL != "" {
-			continue
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if c, ok := a.CLI(); ok {
-				mu.Lock()
-				out[a.ID] = c
-				mu.Unlock()
-			}
-		}()
-	}
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(wait):
-		pending = true
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	snap := make(map[string]CLI, len(out))
-	for k, v := range out {
-		snap[k] = v
-	}
-	return snap, pending
-}
-
 var updating sync.Map // agent id → an update running
 
 // canWrite is writable, and adminNPM whether an npm whose global folder

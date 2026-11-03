@@ -197,59 +197,6 @@ type agentJSON struct {
 	Icon      string      `json:"icon"`
 	Path      string      `json:"path"`
 	Fields    []fieldJSON `json:"fields"`
-	// Drift: its config no longer does what magpie set, and how to set it again
-	Drift *agent.Drift `json:"drift,omitempty"`
-	// Wired: magpie is in its config, which its menu's Disconnect takes out
-	Wired bool `json:"wired,omitempty"`
-	// Import: an app that takes magpie by its own link (Cindy), and
-	// whether it has magpie already; omitted when the app has no status reader
-	Import string `json:"import,omitempty"`
-	Added  *bool  `json:"added,omitempty"`
-	// Launch: the command that starts an agent taking the gateway only
-	// from its environment (agy) on magpie, to copy
-	Launch string `json:"launch,omitempty"`
-	// Typed: what starts it on magpie typed in a new terminal, a function
-	// magpie gave the user's shells (agy); the launch is for one open now
-	Typed string `json:"typed,omitempty"`
-	// Models: how many of the catalog its lists show, for an agent that
-	// picks among it (agent_models.go)
-	Models *modelCountJSON `json:"models,omitempty"`
-	// Menu: its own model menu is the models picked here, no one model to
-	// start on (agent.ListsModels): ZCode's, Cursor Private Inference's
-	Menu bool `json:"menu,omitempty"`
-	// NoNames: its own list doesn't name magpie's models as Names in agents'
-	// lists says (agent.NoNames), for that setting to say so
-	NoNames bool `json:"noNames,omitempty"`
-	// Source: what an agent not connected runs on now (agent.Source), and
-	// Stale: copies of a connected one still running on the list they
-	// started with (agent.Stale), for the line under its name
-	Source string `json:"source,omitempty"`
-	Stale  int    `json:"stale,omitempty"`
-	// StaleCopies: those copies, each with what it is and when it
-	// started, for the opened row to say which is left to reopen and how
-	StaleCopies []agent.StaleCopy `json:"staleCopies,omitempty"`
-	// AppRestart: its desktop app (Claude Desktop, WorkBuddy) running on
-	// what it read before magpie's last change, for the row's Restart
-	// (agent.AppBehind)
-	AppRestart *agent.AppRun `json:"appRestart,omitempty"`
-	// Joined: connected with its own models still in its list (Codex
-	// signed in with ChatGPT, agent.Agent.Join)
-	Joined bool `json:"joined,omitempty"`
-	// AppOut: magpie is Codex's provider while the ChatGPT account it is
-	// signed in to is used up (agent.Agent.AppOut), which turns the Codex
-	// app's ChatGPT side off until the reset
-	AppOut *appOutJSON `json:"appOut,omitempty"`
-	// Failover: not connected, yet its requests go through magpie for
-	// account failover alone (agent.Agent.FailingOver, #1385)
-	Failover bool `json:"failover,omitempty"`
-	// CLIMissing: its settings are here, its CLI isn't (#843), which
-	// the row says with none of its settings offered (#2177), and Install
-	// another agent offers it again where magpie knows how
-	CLIMissing bool               `json:"cliMissing,omitempty"`
-	Native     *agent.NativeState `json:"native,omitempty"`
-	// Terminal: a Mac's row menu offers Open in terminal, a command
-	// starting it being here (agentCommand)
-	Terminal bool `json:"terminal,omitempty"`
 }
 
 // clientJSON is an agent, or another client the gateway knows, as a

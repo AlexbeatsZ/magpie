@@ -88,7 +88,6 @@ func TestResourceManagementPreservesManualModels(t *testing.T) {
 	}
 	before := string(b)
 	agent.SyncCatalog()
-	agent.Rewire(agent.Inventory())
 	if _, err := library.Sync(); err != nil {
 		t.Fatal(err)
 	}

@@ -2,8 +2,8 @@
 
 > **Fork boundary (AlexbeatsZ/magpie, 2026-11).** The Library manages
 > instructions, MCP servers, skills and its existing resource features.
-> `Targets` uses `agent.Inventory`, the existing registry with model fields
-> and integration hooks removed, plus the existing library-only apps.
+> `Targets` uses `agent.Inventory`, the resource registry without model fields
+> or integration hooks, plus the existing library-only apps.
 > The Library page, JSON API, `magpie library` and TUI Library page are
 > available. Startup sync and linked-instruction updates share the existing
 > Library owner. Agent model, endpoint and credential wiring stay manual;

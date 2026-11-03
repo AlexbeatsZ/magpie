@@ -1,13 +1,11 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -539,79 +537,6 @@ func (a *Agent) DisconnectOffline() error {
 	return ErrWiringRemoved
 }
 
-// lastJSONLTime reads the newest Unix timestamp (seconds or milliseconds)
-// under key in the last lines of a prompt log, passing over the lines whose
-// text (under textKey) is a slash command: those an agent answers itself.
-// Zero if there is none.
-func lastJSONLTime(path, key, textKey string) time.Time {
-	f, err := os.Open(path)
-	if err != nil {
-		return time.Time{}
-	}
-	defer f.Close()
-	const tail = 64 << 10
-	if st, err := f.Stat(); err == nil && st.Size() > tail {
-		f.Seek(st.Size()-tail, 0)
-	}
-	var last int64
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64<<10), 4<<20)
-	for sc.Scan() {
-		var m map[string]json.RawMessage
-		if json.Unmarshal(sc.Bytes(), &m) != nil {
-			continue
-		}
-		var text string
-		if json.Unmarshal(m[textKey], &text) == nil && strings.HasPrefix(strings.TrimSpace(text), "/") {
-			continue
-		}
-		n, err := strconv.ParseInt(string(m[key]), 10, 64)
-		if err != nil {
-			continue
-		}
-		if n > 1e12 {
-			n /= 1000
-		}
-		last = max(last, n)
-	}
-	if last == 0 {
-		return time.Time{}
-	}
-	return time.Unix(last, 0)
-}
-
 // sameHost: two URLs name the same server, whatever their scheme (Codex
 // asks magpie's http gateway over ws) or path.
 func sameHost(a, b string) bool { return hostOf(a) == hostOf(b) }
-
-// wiringOff checks what magpie wrote into an agent's config to reach the
-// gateway — pairs of key and value, read with get — and says which no longer
-// holds, "" when all do. A URL is quoted; a key's value never is. A URL
-// that reaches magpie another way (reachesMagpie: a reverse proxy, #1985)
-// holds. So does a key of the gateway's own the user put in place of
-// magpie's (keyHolds).
-func wiringOff(name, file string, get func(string) (string, bool), kvs ...string) string {
-	for i := 0; i+1 < len(kvs); i += 2 {
-		k, want := kvs[i], kvs[i+1]
-		v, _ := get(k)
-		if keyHolds(v, want) || v != "" && reachesMagpie(v, want) {
-			continue
-		}
-		return whatsOff(name, file, k, v, want)
-	}
-	return ""
-}
-
-// whatsOff is what wiringOff says of k in an agent's config, v where
-// magpie wrote want.
-func whatsOff(name, file, k, v, want string) string {
-	where := name + "'s " + k + " (" + filepath.Base(file) + ")"
-	switch {
-	case v == "":
-		return where + " is gone, so it no longer reaches magpie"
-	case strings.Contains(strings.ToLower(k), "url"):
-		return where + " is " + v + ", not magpie's gateway at " + want
-	default:
-		return where + " was changed, so magpie's gateway won't take its requests"
-	}
-}
