@@ -795,9 +795,8 @@ func wslOwnFolder(a *agent.Agent) *Target {
 	return t
 }
 
-// apps is empty: the library never writes MCP servers, skills or
-// instructions into another program's config (Claude Desktop, Kiro CLI),
-// so a backup's or a sync's library can't put the gateway there either.
+// apps are resource targets outside the regular agent inventory, such as
+// Claude Desktop and Kiro CLI. They have no model-wiring integration.
 func apps() []*agent.Agent {
 	d := desktopdir.Here()
 	dir := d.Data

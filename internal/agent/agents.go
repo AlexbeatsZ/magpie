@@ -155,8 +155,8 @@ func Clients() []*Agent {
 	return append(out, others...)
 }
 
-// All is empty: this fork serves an API gateway and does not manage other
-// programs' API configuration. Clients retains read-only request attribution.
+// All is empty: this fork leaves agents' model configuration manual.
+// Clients retains read-only request attribution.
 // Resource management uses Inventory; profiles and model synchronization
 // continue to see no writable agents here.
 func All() []*Agent {
