@@ -109,23 +109,6 @@ func longApply(n int) error {
 	return provider.SetCompactAt(n) // Full window off too
 }
 
-// longUndo puts Long conversations back as it was before tune, unless the
-// user changed it since: then it is theirs, and only forgotten.
-func longUndo() error {
-	st, ok := tuneLongStashed()
-	if !ok {
-		return fmt.Errorf("magpie didn't set Long conversations")
-	}
-	defer forget(tuneLongKey)
-	if !longOurs(settings.Load()) {
-		return nil
-	}
-	if st.Full {
-		return provider.SetFullContext(true)
-	}
-	return provider.SetCompactAt(st.CompactAt)
-}
-
 // tuneMigrateCodex moves a model_auto_compact_token_limit tune wrote into
 // Codex's config.toml before (tune.codex.compact) into Long conversations,
 // and puts back what the file had. Long conversations at magpie's default
@@ -335,111 +318,13 @@ func tuneStashed(agent, knob, model string) (tuneStash, bool) {
 // was there before is kept, the first time only, for TuneUndo. A variable
 // that takes precedence is an error: the setting would change nothing.
 func TuneApply(home, agent, knob, model, value string) error {
-	if agent == "codex" && knob == TuneAsync {
-		return asyncApply(home, value)
-	}
-	p, err := tuneWhere(home, agent, knob, model)
-	if err != nil {
-		return err
-	}
-	cur, _ := TuneRead(home, agent, knob, model)
-	if cur.Locked != "" {
-		return fmt.Errorf("%s=%s is set and comes before the setting: take it out first", cur.Locked, cur.Value)
-	}
-	if cur.Source == TuneLong {
-		n, err := strconv.Atoi(value)
-		if err != nil || n <= 0 {
-			return fmt.Errorf("%q is no token count", value)
-		}
-		if agent == "claude" && (n < 100000 || n > 1000000) {
-			return fmt.Errorf("Claude Code takes a window of 100000 to 1000000 tokens, not %d", n)
-		}
-		return longApply(n)
-	}
-	var v any = value
-	if p.number {
-		n, err := strconv.Atoi(value)
-		if err != nil || n <= 0 {
-			return fmt.Errorf("%q is no token count", value)
-		}
-		if agent == "claude" && (n < 100000 || n > 1000000) {
-			return fmt.Errorf("Claude Code takes a window of 100000 to 1000000 tokens, not %d", n)
-		}
-		v = n
-	} else if value != "5m" && value != "1h" {
-		return fmt.Errorf("the cache is kept 5m or 1h, not %q", value)
-	}
-	key := tuneKey(agent, knob, model)
-	if _, ok := tuneStashed(agent, knob, model); !ok {
-		raw, had := p.get()
-		b, _ := json.Marshal(tuneStash{Had: had, Raw: raw, Set: value})
-		stash(map[string]string{key: string(b)})
-	} else {
-		st, _ := tuneStashed(agent, knob, model)
-		st.Set = value
-		b, _ := json.Marshal(st)
-		stash(map[string]string{key: string(b)})
-	}
-	if p.toml {
-		return edit.SetTOMLTop(p.path, edit.KV{Path: p.key, Value: v})
-	}
-	return edit.SetJSON(p.path, edit.KV{Path: p.key, Value: v})
+	return ErrWiringRemoved
 }
 
 // TuneUndo puts back what a setting was before tune put one in, unless
 // the user has changed it since: then it is theirs, and only forgotten.
 func TuneUndo(home, agent, knob, model string) error {
-	if agent == "codex" && knob == TuneAsync {
-		return asyncUndo()
-	}
-	p, err := tuneWhere(home, agent, knob, model)
-	if err != nil {
-		return err
-	}
-	if cur, _ := TuneRead(home, agent, knob, model); cur.Source == TuneLong {
-		return longUndo()
-	}
-	st, ok := tuneStashed(agent, knob, model)
-	if !ok {
-		return fmt.Errorf("magpie didn't set %s", p.key)
-	}
-	defer forget(tuneKey(agent, knob, model))
-	if v, _ := p.get(); strings.Trim(v, `"'`) != st.Set {
-		return nil
-	}
-	if st.Had {
-		var v any
-		if p.toml {
-			v = tomlRaw(st.Raw)
-		} else if json.Unmarshal([]byte(st.Raw), &v) != nil {
-			v = st.Raw
-		}
-		if p.toml {
-			return edit.SetTOMLTop(p.path, edit.KV{Path: p.key, Value: v})
-		}
-		return edit.SetJSON(p.path, edit.KV{Path: p.key, Value: v})
-	}
-	if p.toml {
-		return edit.DelTOMLTop(p.path, p.key)
-	}
-	if err := edit.DelJSON(p.path, p.key); err != nil {
-		return err
-	}
-	// an entry under modelSettings left with nothing in it goes too
-	if agent == "claude" && knob == TuneCompact {
-		n := claudeName(model)
-		empty := func(k string) bool {
-			v, ok := edit.GetJSON(p.path, k)
-			return ok && strings.Join(strings.Fields(v), "") == "{}"
-		}
-		if empty("modelSettings." + n) {
-			edit.DelJSON(p.path, "modelSettings."+n)
-		}
-		if empty("modelSettings") {
-			edit.DelJSON(p.path, "modelSettings")
-		}
-	}
-	return nil
+	return ErrWiringRemoved
 }
 
 // tomlRaw is a TOML value as GetTOMLTop read it, as a value to write.
@@ -506,37 +391,4 @@ func asyncRead(home string) TuneSetting {
 	}
 	out.Ours = asyncOurs(s)
 	return out
-}
-
-func asyncApply(home, value string) error {
-	n, err := strconv.Atoi(value)
-	if err != nil || n < 1 || n > 100 {
-		return fmt.Errorf("Codex compacts in the background past 1 to 100%% of a model's window, not %q", value)
-	}
-	if own := codexAsyncOwn(home); own != "" {
-		return fmt.Errorf("Codex's config.toml sets %s, which comes before magpie's: take it out first", own)
-	}
-	s := settings.Load()
-	st, ok := asyncStashed()
-	if !ok {
-		st = tuneAsyncStash{On: s.CodexAsyncCompact, Percent: s.CodexAsyncCompactPercent}
-	}
-	st.Set = n
-	b, _ := json.Marshal(st)
-	stash(map[string]string{tuneAsyncKey: string(b)})
-	return provider.SetCodexAsyncCompact(true, n)
-}
-
-// asyncUndo puts Background compaction back as it was before tune, unless
-// the user changed it since: then it is theirs, and only forgotten.
-func asyncUndo() error {
-	st, ok := asyncStashed()
-	if !ok {
-		return fmt.Errorf("magpie didn't set Codex's background compaction")
-	}
-	defer forget(tuneAsyncKey)
-	if !asyncOurs(settings.Load()) {
-		return nil
-	}
-	return provider.SetCodexAsyncCompact(st.On, st.Percent)
 }

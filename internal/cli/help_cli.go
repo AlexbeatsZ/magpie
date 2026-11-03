@@ -1,12 +1,7 @@
 package cli
 
 import (
-	"fmt"
-	"slices"
-	"strconv"
 	"strings"
-
-	"github.com/yetone/magpie/internal/agent"
 )
 
 // helpAsked is whether args ask for help rather than for the command to
@@ -46,10 +41,10 @@ func helpFor(args []string) string {
 			return ruleUsage
 		}
 		return groupUsage
-	case "library", "lib":
-		return "  " + libraryUsage
 	case "plugin", "plugins":
 		return pluginUsage
+	case "library":
+		return libraryUsage
 	case "quota", "quotas":
 		return quotaUsage
 	case "statusline":
@@ -68,8 +63,6 @@ func helpFor(args []string) string {
 		return searchUsage
 	case "tool", "tools":
 		return toolUsage
-	case "visible":
-		return visibleUsage
 	case "webdav", "dav":
 		return webdavUsage
 	case "s3":
@@ -92,9 +85,6 @@ func helpFor(args []string) string {
 			return lines
 		}
 	}
-	if a, err := agent.Find(cmd); err == nil && cmd != "" {
-		return agentHelp(a)
-	}
 	return usage
 }
 
@@ -114,64 +104,4 @@ func usageLines(cmd string) string {
 		}
 	}
 	return b.String()
-}
-
-// agentHelp is `magpie <agent> --help`: the forms that set it, and its
-// fields.
-func agentHelp(a *agent.Agent) string {
-	var b strings.Builder
-	id := a.ID
-	fmt.Fprintf(&b, "%s\n\n", a.Name)
-	fmt.Fprintf(&b, "  magpie %s                  show it\n", id)
-	if len(a.Fields) == 0 {
-		return b.String()
-	}
-	fmt.Fprintf(&b, "  magpie %s <model>          set its model   (magpie models %s lists them)\n", id, id)
-	fmt.Fprintf(&b, "  magpie %s <field>          show one field\n", id)
-	fmt.Fprintf(&b, "  magpie %s <field> <value>  set another field\n", id)
-	fmt.Fprintf(&b, "  magpie %s default          take magpie out: back on what it had before\n", id)
-	fmt.Fprintf(&b, "  magpie %s <field> default  that field back to its own default\n", id)
-	if a.ID == "agy" {
-		fmt.Fprintf(&b, "  magpie %s run [args…]      start agy, on magpie while its model is magpie's (what your shell's agy runs)\n", id)
-		fmt.Fprintf(&b, "  magpie %s env              the variables and model it is started with\n", id)
-	}
-	var keys []string
-	for _, f := range a.Fields {
-		keys = append(keys, f.Key)
-	}
-	fmt.Fprintf(&b, "\nfields: %s\n", strings.Join(keys, ", "))
-	// Claude Code's tiers are named as its model's aliases are
-	var both []string
-	for _, f := range a.Fields {
-		if slices.Contains(a.ModelAliases, f.Key) {
-			both = append(both, f.Key)
-		}
-	}
-	if n := len(both); n > 0 {
-		names := both[0]
-		if n > 1 {
-			names = strings.Join(both[:n-1], ", ") + " and " + both[n-1]
-		}
-		fmt.Fprintf(&b, "  %s alone name the %s: magpie %s %s sets its %s to %s\n", names, a.Fields[0].Label, id, both[0], a.Fields[0].Label, both[0])
-		// they are the agent's own models, not magpie's: setting one takes
-		// magpie out (#2000, read as a query of the tier)
-		fmt.Fprintf(&b, "  they are %s's own models, not magpie's: setting one takes magpie out; magpie %s alone shows each\n", a.Name, id)
-	}
-	return b.String()
-}
-
-// flagArg is an argument to `magpie <agent> …` that is a flag, which no
-// agent form takes: it is said to be one, rather than set as a model or a
-// field's value. A negative number is a value.
-func flagArg(args []string) string {
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			continue
-		}
-		if _, err := strconv.ParseFloat(a, 64); err == nil {
-			continue
-		}
-		return a
-	}
-	return ""
 }

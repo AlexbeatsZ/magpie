@@ -4,11 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,35 +96,7 @@ func record(id, key, v string) {
 // which read as changed outside magpie, and the drift kept the row up
 // among the connected ones while it said Not connected (#834).
 func (a *Agent) Apply(key, v string) error {
-	if a.Native != nil {
-		return a.Native.Apply(key, v)
-	}
-	f := a.Field(key)
-	if f == nil {
-		return nil
-	}
-	// a found group named by its old id is written as it is listed now,
-	// auto/<model> (autoref.go)
-	if pub, ok := a.publicValue(v); ok {
-		v = pub
-	}
-	was := a.Values()
-	if err := f.Set(v); err != nil {
-		return err
-	}
-	now := a.Values()
-	for k := range appliedOf(a.ID).Fields {
-		if k != f.Key && now[k] != was[k] {
-			record(a.ID, k, now[k])
-		}
-	}
-	record(a.ID, f.Key, f.Get())
-	// magpie picked in by the user's own hand (magpie model, a pick in
-	// the CLI) connects it again
-	if a.Wired() {
-		forget(a.ID + disconnectedKey)
-	}
-	return nil
+	return ErrWiringRemoved
 }
 
 // Drift is how an agent differs from what magpie set on it.
@@ -398,41 +368,7 @@ func orDefault(v string) string {
 // catches. A replaced field brings back the others magpie set with it.
 // Either way the record is renewed, so a use before now no longer counts.
 func (a *Agent) Reapply() error {
-	if a.Native != nil {
-		return a.Native.Connect()
-	}
-	d := a.Drift()
-	if d != nil && d.Kind == "unreachable" && d.Move != "" && a.move != nil {
-		return a.move(d.Addr, d.Move)
-	}
-	if d != nil && d.Kind == "replaced" {
-		rec := appliedOf(a.ID)
-		// the model first: the others (an effort) are checked against it
-		if err := a.Apply(d.Field, d.Want); err != nil {
-			return err
-		}
-		for _, f := range a.Fields {
-			if v, ok := rec.Fields[f.Key]; ok && f.Key != d.Field && f.Get() != v {
-				if err := a.Apply(f.Key, v); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	vals := a.Values()
-	for _, f := range a.Fields {
-		// magpie as the agent's provider too (Claude Desktop's provider
-		// field, beside its tiers on magpie's models), as Wired takes it:
-		// left out, Reconnect set the tiers again and never the gateway
-		// Check found off (dumplings on Discord)
-		if v := vals[f.Key]; v != "" && (d != nil && f.Key == d.Field || v == magpieID || magpieValue(a, f, v, vals)) {
-			if err := a.Apply(f.Key, v); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return ErrWiringRemoved
 }
 
 // Keep takes the agent's config as it is now: what magpie set before is
@@ -441,27 +377,7 @@ func (a *Agent) Reapply() error {
 // whose magpie is spelled as a provider of its own config still reads as
 // connected.
 func (a *Agent) Keep() {
-	appliedMu.Lock()
-	defer appliedMu.Unlock()
-	m := appliedLoad()
-	if _, ok := m[a.ID]; !ok {
-		return
-	}
-	m[a.ID] = applied{Kept: true}
-	appliedSave(m)
-}
 
-// forgetSetUp is Disconnect's Keep: what magpie set is forgotten, and so is
-// that magpie set the agent up at all.
-func (a *Agent) forgetSetUp() {
-	appliedMu.Lock()
-	defer appliedMu.Unlock()
-	m := appliedLoad()
-	if _, ok := m[a.ID]; !ok {
-		return
-	}
-	delete(m, a.ID)
-	appliedSave(m)
 }
 
 // setUp reports whether magpie put the agent on magpie and it hasn't been
@@ -527,23 +443,7 @@ func (a *Agent) Wired() bool {
 // model picked in magpie in one click, both): the agent gets magpie's whole
 // list, and Disconnect puts back what it had before.
 func (a *Agent) Pick(key, v string) error {
-	if a.Native != nil {
-		value, err := a.Spell(key, v)
-		if err != nil {
-			return err
-		}
-		return a.Apply(key, value)
-	}
-	if f := a.Field(key); f != nil && !a.Wired() {
-		vals := a.Values()
-		vals[key] = v
-		if v == magpieID || magpieValue(a, *f, v, vals) {
-			if _, err := a.connect(); err != nil {
-				return err
-			}
-		}
-	}
-	return a.Apply(key, v)
+	return ErrWiringRemoved
 }
 
 // Connect puts magpie into the agent's config, the Agents page's switch
@@ -609,22 +509,9 @@ type Connection struct {
 // changed: the library gives Codex its servers another way on magpie.
 var Rewired func(id string)
 
-func (a *Agent) rewired(err error) {
-	if err == nil && Rewired != nil {
-		Rewired(a.ID)
-	}
-}
-
 // ConnectHow is Connect, saying how the model was chosen.
 func (a *Agent) ConnectHow() (c Connection, err error) {
-	defer func() { a.rewired(err) }()
-	if a.Native != nil {
-		return Connection{How: "joined"}, a.Native.Connect()
-	}
-	if len(a.Fields) == 0 || a.Wired() {
-		return Connection{How: "kept"}, nil
-	}
-	return a.connect()
+	return c, ErrWiringRemoved
 }
 
 // disconnectedKey, after an agent's id, marks in the stash an agent the
@@ -635,189 +522,6 @@ const disconnectedKey = ".disconnected"
 // connected it since.
 func (a *Agent) Disconnected() bool { return stashShared()[a.ID+disconnectedKey] == "1" }
 
-// noModelLeft says why there is no model of magpie's to connect the agent
-// to: none added yet (NoModelsError), or every one taken out of its lists
-// (AllHiddenError); nil while one is left.
-func (a *Agent) noModelLeft() error {
-	shown, hidden := provider.CatalogFor(a.ListsFor())
-	// nothing to connect it to yet: no provider or subscription added,
-	// which said only that it can't be connected (Tystem on Discord)
-	if len(shown)+len(hidden) == 0 {
-		return &NoModelsError{Agent: a.Name}
-	}
-	// magpie has models, and every one of them is taken out of the
-	// agent's lists (a picked model gone with its provider, one hidden by
-	// hand): saying the agent can't be connected sends the user looking
-	// at the agent, when its model list is what emptied it (#1989)
-	if len(shown) == 0 {
-		return &AllHiddenError{Agent: a.Name}
-	}
-	return nil
-}
-
-func (a *Agent) connect() (Connection, error) {
-	forget(a.ID + disconnectedKey)
-	// what it is on now, for Disconnect to put back what it can't
-	// otherwise (Goose's own model)
-	now := a.Values()
-	b, _ := json.Marshal(now)
-	stash(map[string]string{a.ID + ".connect.was": string(b)})
-	// switched off and on again: the models it was on, as they were
-	if ok, err := a.reconnect(now); ok || err != nil {
-		return Connection{How: "again"}, err
-	}
-	// the model it is on stays, where the agent can have magpie's models
-	// beside it (the owner: Codex keeps its own last pick)
-	if a.Join != nil {
-		if ok, err := a.Join(); ok || err != nil {
-			return Connection{How: "joined"}, err
-		}
-	}
-	// the field magpie is picked in: the one listing magpie's models (for
-	// Gemini CLI its model, its first field being how it signs in), else one
-	// whose value is magpie itself
-	vals := a.Values()
-	var f *Field
-	var opts []Option
-	for pass := 0; pass < 2 && f == nil; pass++ {
-		for i := range a.Fields {
-			if a.Fields[i].Options == nil {
-				continue
-			}
-			list := a.Fields[i].Options(vals)
-			for _, o := range list {
-				if pass == 0 && o.Ref != "" || pass == 1 && o.Value == magpieID {
-					f, opts = &a.Fields[i], list
-					break
-				}
-			}
-			if f != nil {
-				break
-			}
-		}
-	}
-	if f == nil {
-		if err := a.noModelLeft(); err != nil {
-			return Connection{}, err
-		}
-		return Connection{}, fmt.Errorf("%s can't be connected to magpie", a.Name)
-	}
-	cur := connectWas(vals[f.Key], opts)
-	if cur == "" && f.Key != a.Fields[0].Key {
-		cur = connectWas(a.Values()[a.Fields[0].Key], nil)
-	}
-	onDefault := cur == ""
-	if cur == "" {
-		// on its default: the first of its own models
-		for _, o := range opts {
-			if o.Ref == "" && o.Group == a.Name && o.Value != magpieID {
-				cur = connectWas(o.Value, opts)
-				break
-			}
-		}
-	}
-	// the model it is on now, through magpie (or of its family, for an
-	// alias): on the account it is signed in to (its vendor's) first, then
-	// on a subscription, before a key's; else its own vendor's; else a
-	// subscription's; else the first
-	var pick, same, alike, own, sub, group string
-	sameRank, alikeRank := -1, -1
-	for _, o := range opts {
-		if o.Value == magpieID {
-			if err := a.Apply(f.Key, magpieID); err != nil {
-				return Connection{}, err
-			}
-			// an app whose picker gets magpie's models as listed for it
-			// (WorkBuddy, ZCode): with none listed, setting magpie wrote
-			// none, and the agent reads as not connected right after a
-			// connect that said it was (Lumens on Discord). One connected
-			// by its address alone (Cursor Private Inference) is connected
-			// all the same.
-			if !a.Wired() {
-				if err := a.noModelLeft(); err != nil {
-					return Connection{}, err
-				}
-			}
-			return Connection{How: "magpie", Field: f.Key, Value: magpieID}, nil
-		}
-		if o.Ref != "" && o.Group == RoutingGroups && group == "" {
-			group = o.Value
-		}
-		if o.Ref == "" || o.Group == RoutingGroups {
-			continue
-		}
-		rank := 0
-		if o.own || o.Group == a.Name {
-			rank = 2
-		} else if o.sub {
-			rank = 1
-		}
-		if pick == "" {
-			pick = o.Value
-		}
-		id := o.Ref[strings.LastIndex(o.Ref, "/")+1:]
-		if cur != "" && (id == cur || strings.TrimSuffix(id, "[1m]") == cur) && rank > sameRank {
-			same, sameRank = o.Value, rank
-		}
-		// an alias (opus) no label read: the model of that family
-		if cur != "" && !strings.Contains(cur, "-") && strings.Contains(id+"-", "-"+cur+"-") && rank > alikeRank {
-			alike, alikeRank = o.Value, rank
-		}
-		if own == "" && (o.own || o.Group == a.Name) {
-			own = o.Value
-		}
-		if sub == "" && o.sub {
-			sub = o.Value
-		}
-	}
-	// the model it is on, of its own, as magpie serves it on a sign-in of
-	// the user's, which its field lists as its own (Codex's on a ChatGPT
-	// account it can't join, #940)
-	if same == "" && alike == "" && cur != "" && a.OwnVia != nil {
-		same = a.OwnVia(cur)
-	}
-	how := "first"
-	switch {
-	case same != "":
-		pick, how = same, "same"
-		if onDefault {
-			how = "default"
-		}
-	case alike != "":
-		pick, how = alike, "alike"
-	case own != "":
-		pick = own
-	case sub != "":
-		pick = sub
-	case pick == "" && group != "":
-		// only routing groups are shown it (its models hidden, or its own
-		// account's alone beside them): the first group (#939)
-		pick = group
-	}
-	if pick == "" {
-		return Connection{}, fmt.Errorf("magpie has no models %s can use: add a subscription or a provider first", a.Name)
-	}
-	return Connection{How: how, Field: f.Key, Value: pick}, a.Apply(f.Key, pick)
-}
-
-// connectWas is the model an agent is on before it is connected, as a
-// model id: its own option's alias read through the label that names the
-// model ("opus · claude-opus-5-5"), a provider's prefix taken off.
-func connectWas(v string, opts []Option) string {
-	for _, o := range opts {
-		if o.Value == v && o.Ref == "" {
-			if _, id, ok := strings.Cut(o.Label, " · "); ok {
-				v = strings.TrimSpace(id)
-			}
-			break
-		}
-	}
-	if i := strings.LastIndex(v, "/"); i >= 0 {
-		v = v[i+1:]
-	}
-	return strings.TrimSpace(v)
-}
-
 // Disconnect takes magpie out of the agent's config and puts back what the
 // user had, the Agents page's "Disconnect from magpie" (Fate on Discord:
 // picking the agent's default did it, but nothing said so). Unwire first,
@@ -826,163 +530,13 @@ func connectWas(v string, opts []Option) string {
 // each one magpie set that reads as magpie set it (an effort). What magpie
 // remembered setting is forgotten.
 func (a *Agent) Disconnect() (err error) {
-	defer func() { a.rewired(err) }()
-	if a.Native != nil {
-		plan, err := a.Native.Disconnect()
-		if err != nil {
-			return err
-		}
-		return a.Native.Execute(plan)
-	}
-	if !a.Wired() {
-		return nil
-	}
-	// the user's say, kept till they connect it again: nothing magpie does
-	// by itself (a start's Sync, Codex's account failover) puts magpie back
-	// in, this Disconnect's own writes included (paynezhuang on Discord)
-	stash(map[string]string{a.ID + disconnectedKey: "1"})
-	// the user's own say over a harness Kiro Crew's connect put on
-	kiroCrewUserLeft(a.ID)
-	before, rec := a.Values(), appliedOf(a.ID)
-	if a.Unwire != nil {
-		if err := a.Unwire(); err != nil {
-			return err
-		}
-	}
-	for _, f := range a.Fields {
-		vals := a.Values()
-		v := vals[f.Key]
-		// set by magpie: as it set it, or its group by the model's name
-		set := v != "" && (rec.Fields[f.Key] == v || sameGroup(rec.Fields[f.Key], v)) && before[f.Key] == v
-		if v == "" || !set && v != magpieID && !magpieValue(a, f, v, vals) {
-			continue
-		}
-		if err := f.Set(""); err != nil {
-			return fmt.Errorf("%s: %w", f.Label, err)
-		}
-	}
-	// a field its own Set left empty goes back to what it was on before
-	// Connect (Goose's own provider and model)
-	var was map[string]string
-	json.Unmarshal([]byte(unstash(a.ID+".connect.was")), &was)
-	after := a.Values()
-	// connected while on a provider named magpie it had by hand: what it
-	// was on then is magpie's route, its thinking level read off it too
-	// (dsh's), not the agent's own to put back
-	for _, f := range a.Fields {
-		if w := was[f.Key]; w == magpieID || magpieValue(a, f, w, was) {
-			was = nil
-			break
-		}
-	}
-	for _, f := range a.Fields {
-		if w := was[f.Key]; w != "" && after[f.Key] == "" && w != magpieID && !magpieValue(a, f, w, was) {
-			if err := f.Set(w); err != nil {
-				return fmt.Errorf("%s: %w", f.Label, err)
-			}
-		}
-	}
-	if a.Restore != nil {
-		if err := a.Restore(); err != nil {
-			return err
-		}
-	}
-	// what it was on through magpie, for switching it on again
-	back := reconnection{Magpie: map[string]string{}, Left: a.Values()}
-	for _, f := range a.Fields {
-		if v := before[f.Key]; v != back.Left[f.Key] {
-			back.Magpie[f.Key] = v
-			if v == magpieID || magpieValue(a, f, v, before) {
-				back.Routed = append(back.Routed, f.Key)
-			}
-		}
-	}
-	b, _ := json.Marshal(back)
-	stash(map[string]string{a.ID + ".reconnect": string(b)})
-	a.forgetSetUp()
-	return nil
+	return ErrWiringRemoved
 }
 
 // DisconnectOffline restores a native agent's saved files only after an
 // explicit offline choice. Legacy callers of Disconnect keep live semantics.
 func (a *Agent) DisconnectOffline() error {
-	if a.Native == nil || a.Native.ExecuteOffline == nil {
-		return fmt.Errorf("%s does not support offline disconnect", a.Name)
-	}
-	plan, err := a.Native.Disconnect()
-	if err != nil {
-		return err
-	}
-	return a.Native.ExecuteOffline(plan)
-}
-
-// reconnection is what Disconnect took an agent off: the values of its
-// fields it changed (Routed: those that were magpie's) and what it left
-// every field at.
-type reconnection struct {
-	Magpie map[string]string `json:"magpie"`
-	Routed []string          `json:"routed,omitempty"`
-	Left   map[string]string `json:"left"`
-}
-
-// reconnect puts back the models an agent was on when it was disconnected
-// (the owner: an agent remembers its last pick), if nothing has changed
-// it since and magpie still routes them; false when it doesn't apply.
-func (a *Agent) reconnect(now map[string]string) (bool, error) {
-	var rec reconnection
-	if json.Unmarshal([]byte(unstash(a.ID+".reconnect")), &rec) != nil || len(rec.Routed) == 0 {
-		return false, nil
-	}
-	for k, v := range rec.Left {
-		if now[k] != v {
-			return false, nil
-		}
-	}
-	for _, k := range rec.Routed {
-		f := a.Field(k)
-		if f == nil || rec.Magpie[k] != magpieID && !magpieValue(a, *f, rec.Magpie[k], rec.Magpie) {
-			return false, nil
-		}
-	}
-	// joined first, where the agent can be (Codex signed in with ChatGPT),
-	// as the switch connects it the first time: its own models stay
-	// through magpie beside the one put back. Put back on a routing group
-	// alone, Codex was beside its sign-in and not joined, so picking one
-	// of its own on the Agents page took it off magpie, every OpenAI model
-	// then said direct, and after a group again they said via magpie
-	// though a pick still went straight to OpenAI (NancyTom18 on X)
-	if a.Join != nil {
-		if _, err := a.Join(); err != nil {
-			return true, err
-		}
-	}
-	// the models on magpie first, as Connect sets them (setting Gemini
-	// CLI's model signs it in through magpie, which its sign-in field
-	// can't), then the rest that aren't so by then
-	var keys []string
-	for _, k := range rec.Routed {
-		if rec.Magpie[k] != magpieID {
-			keys = append(keys, k)
-		}
-	}
-	for _, f := range a.Fields {
-		if _, ok := rec.Magpie[f.Key]; ok && !slices.Contains(keys, f.Key) {
-			keys = append(keys, f.Key)
-		}
-	}
-	for _, k := range keys {
-		v := rec.Magpie[k]
-		if v != a.Values()[k] {
-			if err := a.Apply(k, v); err != nil {
-				return true, err
-			}
-		} else {
-			// set along with the model (Codex's effort): magpie's as before,
-			// for Disconnect to take out again
-			record(a.ID, k, v)
-		}
-	}
-	return a.Wired(), nil
+	return ErrWiringRemoved
 }
 
 // lastJSONLTime reads the newest Unix timestamp (seconds or milliseconds)

@@ -36,7 +36,9 @@ const web = !!window.bootPrefs?.web;
 // gateway for other computers' agents leaves out this computer's agents'
 // pages — Agents, Sessions, Library — and their settings; Settings ›
 // General turns it off, and they are back.
-let gatewayMode = web && !!window.bootPrefs?.gateway;
+const gatewayOnly = !!window.bootPrefs?.gatewayOnly;
+const manualModels = !!window.bootPrefs?.manualModels;
+let gatewayMode = gatewayOnly || web && !!window.bootPrefs?.gateway;
 const GATEWAY_HIDES = ["agents", "library"];
 // Plugins › Built-in (builtins.go; Lxxyx on X: too much to look through):
 // the optional parts of the window switched off, by id. Whatever is marked
@@ -82,7 +84,7 @@ if (window.bootPrefs) setLocale(window.bootPrefs.lang);
 let state = { agents: [], profiles: [], catalog: "", settings: {} };
 let prefs = null; // the settings page: theme, lang, version, dir, gateway
 let providers = null; // { providers, presets, gateway }
-let view = "agents";
+let view = gatewayOnly ? "providers" : "agents";
 let showAllAgents = false; // the agents no one has set anything on, folded away
 let showHiddenAgents = false; // under them, the ones hidden by hand: a fold of their own, shut until asked
 let period = "today"; // usage window
@@ -436,6 +438,7 @@ function directSaid(a, opt) {
 // Rows in the shape of the list while magpie first reads the agents; a
 // reload keeps the rows it has until the new ones are in.
 function renderAgentsLoading() {
+  if (gatewayOnly) return;
   const page = $("#view-agents");
   page.classList.add("loading");
   page.setAttribute("aria-busy", "true");
@@ -458,7 +461,46 @@ function renderAgentsLoading() {
 }
 
 let agentArranging = false, agentRenderPending = false;
+function renderManagedAgents() {
+  const page = $("#view-agents"), list = $("#agents");
+  page.classList.remove("loading");
+  page.removeAttribute("aria-busy");
+  list.replaceChildren();
+  if (mode === "panel") $("#ptabN").textContent = state.agents.length || "";
+  if (!state.agents.length) {
+    const empty = el("div", "empty-state");
+    empty.append(el("b", "", t("No agents found")), el("span", "", t("Install Claude Code, Codex, Gemini CLI, OpenCode… and magpie will list them here.")));
+    list.append(empty);
+  }
+  for (const a of state.agents) {
+    const row = el("div", "row managed-agent");
+    row.dataset.id = a.id;
+    row.append(icon(a.icon));
+    const who = el("div", "who");
+    who.append(el("div", "name", a.name));
+    const labels = { instructions: "Instructions", mcp: "MCP servers", skills: "Skills" };
+    who.append(el("div", "sub", (a.resources || []).map((r) => t(labels[r])).join(" · ") || a.path));
+    row.append(who);
+    const actions = el("div", "managed-agent-actions");
+    if (a.resources?.length) {
+      const library = el("button", "text", t("Library"));
+      library.type = "button";
+      library.onclick = () => show("library");
+      actions.append(library);
+    }
+    const sessions = el("button", "text", t("Sessions"));
+    sessions.type = "button";
+    sessions.onclick = (e) => magpie.call("sessions", "reveal", { agent: a.id }, e);
+    actions.append(sessions);
+    row.append(actions);
+    list.append(row);
+  }
+  fit();
+}
+
 function renderAgents() {
+  if (manualModels) return renderManagedAgents();
+  if (gatewayOnly) return;
   renderCodexMemories(); // the Codex sheet's row is the same field
   renderCodexSubagentModel(); // and this one
   if (agentArranging) { agentRenderPending = true; return; }
@@ -2548,6 +2590,8 @@ function paintCLI(id) {
 
 let cliLoading = null;
 async function loadCLIs(again = 0) {
+  if (manualModels) return;
+  if (gatewayOnly) return;
   if (mode === "panel" || cliLoading) return;
   cliLoading = (async () => {
     let r;
@@ -2705,6 +2749,8 @@ const VIA = { script: "Installer", powershell: "PowerShell", brew: "Homebrew", n
 let pluginAgents = []; // the names of the agents a suggested plugin adds, not installed
 
 async function loadInstalls() {
+  if (manualModels) return;
+  if (gatewayOnly) return;
   if (mode === "panel") return;
   // the plugins' agents come from the market, which may be fetched: the
   // commands aren't held for them
@@ -16871,14 +16917,15 @@ if (mode === "panel") {
   // Escape closes them in profileEscape, and the name field's is its own
   addEventListener("resize", placeProfiles);
 }
-let panelTab = "agents";
-try { panelTab = localStorage.getItem("magpie.panelTab") || "agents"; } catch {}
+let panelTab = gatewayOnly ? "stats" : "agents";
+try { panelTab = localStorage.getItem("magpie.panelTab") || (gatewayOnly ? "stats" : "agents"); } catch {}
 function setPanelTab(tab) {
+  if (gatewayOnly && tab === "agents") tab = "stats";
   const tabs = $("#ptabs");
   // no usage to show, no tab for it (nor for profiles: they open from the
   // foot), nor for a page a built-in plugin switched off (Routing)
   const b = tabs.querySelector(`[data-ptab="${tab}"]`);
-  if (!b || b.hidden || featureHides(b)) tab = "agents";
+  if (!b || b.hidden || featureHides(b)) tab = gatewayOnly ? "stats" : "agents";
   closeProfiles();
   if (tab !== "usage") panelPeek = "";
   panelTab = tab;
@@ -19297,7 +19344,7 @@ function applyPrefs(s, rate) {
 // icon), offered only in the app on Omarchy
 let barIcon = null;
 function renderBarIcon() {
-  $("#barIconRow").hidden = !barIcon?.available || gatewayMode; // the desktop's, not a gateway's
+  $("#barIconRow").hidden = !barIcon?.available || gatewayMode && web; // the desktop's, not a gateway's
   if ($("#barIconRow").hidden) return;
   $("#barIconSegs").replaceChildren(segs([["off", t("Off")], ["on", t("On")]], barIcon.on ? "on" : "off", (v) =>
     api("omarchy/widget", { on: v === "on" }).then((b) => { barIcon = b; renderBarIcon(); })
@@ -19907,11 +19954,13 @@ function renderSettings() {
   if (!web) {
     const go = el("button", "text danger", t("Uninstall…"));
     go.onclick = () => uninstallMagpie(go);
-    row(t("Uninstall magpie"), t("Disconnects every agent, putting back what each had, then removes magpie's service and files"), "", go).id = "uninstallRow";
+    row(t("Uninstall magpie"), t("Removes magpie's service and files"), "", go).id = "uninstallRow";
   }
   // gateway mode leaves out what is written into this computer's agents'
-  // files, and the alerts its desktop would show
-  for (const r of [$("#plainNamesSegs").parentElement, $("#usageAlertRow"), $("#balanceAlertRow"), $("#resetReminderRow"), $("#turnDoneRow")]) r.hidden = gatewayMode;
+  // files, and on a web page the alerts its desktop would show; the app's
+  // own windows, always in gateway mode here, keep their desktop alerts
+  for (const r of [$("#plainNamesSegs").parentElement, $("#turnDoneRow")]) r.hidden = gatewayMode;
+  for (const r of [$("#usageAlertRow"), $("#balanceAlertRow"), $("#resetReminderRow")]) r.hidden = gatewayMode && web;
   // the parts' tabs, one gone whose rows are all hidden here
   setSetTab(setTab);
 }
@@ -19920,6 +19969,7 @@ function renderSettings() {
 // (on with --gateway or no agents here), On or Off. Turned, the tabs follow
 // at once.
 function renderGatewayMode(s) {
+  if (gatewayOnly || manualModels) { $("#gatewayModeRow").hidden = true; return; }
   $("#gatewayModeRow").hidden = !web;
   if (!web) return;
   $("#gatewayModeSegs").replaceChildren(segs([["auto", t("Automatic")], ["on", t("On")], ["off", t("Off")]], s.gatewayMode || "auto", (v) =>
@@ -21127,7 +21177,7 @@ const AGENT_PREFS = {
   claude: ["fullContextRow"],
   grok: ["fullContextRow"],
 };
-const agentPrefsOf = (a) => gatewayMode ? null : AGENT_PREFS[kindOf(a)];
+const agentPrefsOf = (a) => gatewayMode || manualModels ? null : AGENT_PREFS[kindOf(a)];
 const PREFS_GLYPH = "M2.75 4.75h10.5M2.75 11.25h10.5M5.75 3.25v3M10.25 9.75v3";
 let agentPrefRowEls = null;
 // homeAgentPrefRows puts back the rows a sheet took with it when another
@@ -23244,6 +23294,7 @@ if (mode === "window") for (const b of $("#nav").querySelectorAll("button[data-v
 // setGatewayMode shows or leaves out gateway mode's pages' tabs; the page
 // open, one of them, gives way to Providers
 function setGatewayMode(on) {
+  on = gatewayOnly || on;
   gatewayMode = on;
   document.body.classList.toggle("gateway-mode", on);
   if (mode !== "window") return;

@@ -4775,3 +4775,20 @@ body .row.agent .ag-prefs .row.pref .who { display: block; }
 .sess-tools .led-rename { flex: none; width: 180px; height: 26px; padding: 0 8px; border-radius: 7px; font-size: 12px; }
 /* Settings › About › Open-source licenses: the notices, as written */
 .notices-text { margin: 0; font: 11px/1.5 var(--code); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* This fork exposes the gateway, without managing another program’s config. */
+body.gateway-only #nav [data-view="agents"],
+body.gateway-only #nav [data-view="library"],
+body.gateway-only #ptabs [data-ptab="agents"],
+body.gateway-only.window #view-agents,
+body.gateway-only.panel #agents,
+body.gateway-only.panel .profiles,
+body.gateway-only #gatewayModeRow { display: none !important; }
+body.gateway-only #profBtn { display: none !important; }
+
+body.manual-models .profiles,
+body.manual-models #profBtn,
+body.manual-models #gatewayModeRow { display: none !important; }
+.managed-agent .who { min-width: 0; flex: 1; }
+.managed-agent .sub { overflow-wrap: anywhere; }
+.managed-agent-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

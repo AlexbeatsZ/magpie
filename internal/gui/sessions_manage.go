@@ -35,7 +35,8 @@ type manageAgentJSON struct {
 // too, #752) with where magpie's gateway sent its calls
 type managedJSON struct {
 	sessions.Managed
-	Via []usage.Via `json:"via,omitempty"`
+	Reference string      `json:"reference,omitempty"`
+	Via       []usage.Via `json:"via,omitempty"`
 }
 
 // listedGateway are the gateway sessions the session lists show: not those
@@ -219,7 +220,7 @@ func sessionManageRoutes(mux *http.ServeMux, w Windows) {
 			vias := usage.Vias(since.Add(-time.Minute))
 			for _, s := range list {
 				s.Path = tilde(s.Path)
-				out.Sessions = append(out.Sessions, managedJSON{Managed: s, Via: viaOf(vias, s.Session)})
+				out.Sessions = append(out.Sessions, managedJSON{Managed: s, Reference: sessions.Reference(s.Session), Via: viaOf(vias, s.Session)})
 			}
 			sizes := sessions.GatewaySizes()
 			for _, g := range gateway {

@@ -47,7 +47,9 @@ func Feed() string {
 	if f := os.Getenv("MAGPIE_UPDATE_FEED"); f != "" {
 		return f
 	}
-	return Site + "/api/latest"
+	// An upstream binary would restore the removed client-config writers.
+	// This fork publishes the existing feed format with its own releases.
+	return "https://github.com/AlexbeatsZ/magpie/releases/latest/download/update.json"
 }
 
 // Release is one published version.

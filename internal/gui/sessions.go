@@ -34,8 +34,9 @@ import (
 // sessionJSON is a session with what the UI needs to draw its agent.
 type sessionJSON struct {
 	sessions.Session
-	Name string `json:"name"`
-	Icon string `json:"icon"`
+	Name      string `json:"name"`
+	Icon      string `json:"icon"`
+	Reference string `json:"reference,omitempty"`
 	// Via: the models the gateway sent its calls to, at the reasoning
 	// each was asked for, when it went through magpie
 	Via []usage.Via `json:"via,omitempty"`
@@ -157,7 +158,7 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 				return false
 			}
 			codex = codex || s.Agent == "codex"
-			out.Sessions = append(out.Sessions, sessionJSON{Session: *s})
+			out.Sessions = append(out.Sessions, sessionJSON{Session: *s, Reference: sessions.Reference(*s)})
 			return true
 		})
 		var modelEffort map[string][]sessions.ModelEffort
@@ -285,7 +286,28 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 	// work: the page's top sessions reach past the latest List reads.
 	mux.HandleFunc("GET /api/sessions/one", func(rw http.ResponseWriter, r *http.Request) {
 		key := r.URL.Query().Get("key")
-		s, ok := sessions.Get(key)
+		var s sessions.Session
+		var ok bool
+		if strings.Count(key, ":") == 1 {
+			s, ok = sessions.Get(key)
+		} else {
+			var err error
+			s, err = sessions.ResolveReference(key)
+			if err != nil {
+				code := http.StatusBadRequest
+				if errors.Is(err, sessions.ErrReferenceMissing) {
+					code = http.StatusNotFound
+				}
+				if errors.Is(err, sessions.ErrReferenceAmbiguous) {
+					code = http.StatusConflict
+				}
+				rw.Header().Set("Content-Type", "application/json")
+				rw.WriteHeader(code)
+				_ = json.NewEncoder(rw).Encode(map[string]string{"error": err.Error()})
+				return
+			}
+			ok = true
+		}
 		if !ok {
 			if a, id, found := strings.Cut(key, ":"); found {
 				if g, gok := usage.GatewaySessionByID(a, id, nil); gok {
@@ -303,7 +325,7 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 		if s.Agent == "codex" {
 			addCodexModelEffort(&s, usage.CodexModelEffort(usage.All))
 		}
-		j := sessionJSON{Session: s, Name: s.Agent, Icon: "generic"}
+		j := sessionJSON{Session: s, Name: s.Agent, Icon: "generic", Reference: sessions.Reference(s)}
 		for _, a := range agent.Clients() {
 			if a.ID == cmp.Or(s.App, s.Agent) {
 				j.Name, j.Icon = a.SharedName(), a.Icon

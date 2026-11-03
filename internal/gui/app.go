@@ -19,11 +19,9 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
-	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/autostart"
 	"github.com/yetone/magpie/internal/gateway"
-	"github.com/yetone/magpie/internal/library"
 	"github.com/yetone/magpie/internal/omarchy"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/settings"
@@ -431,25 +429,6 @@ func Run(version string, showMain bool, link string) error {
 			if handedOver.Load() {
 				return
 			}
-			if served.Load() != nil {
-				ended, err := agent.EndCodexFailover()
-				if err != nil {
-					log.Println("codex failover:", err)
-				}
-				// the threads Codex has open keep the gateway's address
-				// they began with: a relay serves them there on Codex's
-				// own sign-in once the gateway has let go (codexrelay;
-				// idkatbro on X: 503 "Unknown error" till magpie reopened)
-				if ended {
-					if err := agent.RelayOpenCodex(); err != nil {
-						log.Println("codex relay:", err)
-					}
-				}
-			}
-			// the compactions magpie made in Codex's threads written as
-			// Codex's own, for the threads no Codex has open: with magpie
-			// gone they still go on (LukeMa on X)
-			agent.PortCodexRollouts(3 * time.Second)
 			updates.install(false)
 		},
 		// Wails exits on some webview errors; say why before it does.
@@ -550,20 +529,6 @@ func Run(version string, showMain bool, link string) error {
 	}
 	updates.start()
 	news.start()
-	// the library written into the agents again, once: one installed or
-	// updated since (or an edit by hand) gets it without a visit to the page
-	go func() {
-		if res, err := library.Sync(); err != nil {
-			log.Println("library sync:", err)
-		} else {
-			for _, p := range res.Problems {
-				log.Println("library sync:", p.Agent, p.What, p.Error)
-			}
-		}
-		// a set kept in a file of the user's (~/.agents/AGENTS.md) is
-		// edited outside magpie: the agents get each change
-		library.KeepLinked(30 * time.Second)
-	}()
 
 	// before the item is made, which starts as hidden as AppKit kept it
 	hiddenAtStart := bringTrayBack()

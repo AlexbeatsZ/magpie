@@ -795,38 +795,23 @@ func wslOwnFolder(a *agent.Agent) *Target {
 	return t
 }
 
-// apps are what the library can give MCP servers to that aren't agents
-// magpie sets up: known by the folder they keep their settings in
-// (Claude Desktop), or by their program alone (Kiro CLI).
+// apps is empty: the library never writes MCP servers, skills or
+// instructions into another program's config (Claude Desktop, Kiro CLI),
+// so a backup's or a sync's library can't put the gateway there either.
 func apps() []*agent.Agent {
-	// Desktop's own folder (%APPDATA%\Claude on Windows, the MSIX
-	// package's for a packaged Desktop, which doesn't see a file written
-	// into %APPDATA%). Desktop only ever run in its 3p mode has no Claude
-	// folder, only Claude-3p: its file is the one there
 	d := desktopdir.Here()
 	dir := d.Data
 	if !isDir(dir) && isDir(d.ThreeP) {
 		dir = d.ThreeP
 	}
-	out := []*agent.Agent{
-		{ID: "claude-desktop", Name: "Claude Desktop", Icon: "claude-color", Dir: dir, Path: filepath.Join(dir, "claude_desktop_config.json")},
-	}
-	// Kiro CLI (#4769) is no agent magpie wires a model into, but the
-	// library can give it skills, MCP servers and instructions. It is
-	// found by the kiro-cli program alone — PATH, ~/.local/bin, Kiro
-	// CLI.app, where provider.KiroExecutable looks — never by ~/.kiro,
-	// which Kiro Crew and the Kiro IDE keep too. Bin is the path itself,
-	// so a copy the installer put where magpie's PATH doesn't reach is
-	// found as it was (Detected looks a Bin up by PATH alone). It is
-	// listed when kiro-cli isn't found too, and then not Detected, so not
-	// a target: held still lists one uninstalled with what magpie gave it,
-	// for that to be unticked and taken out of ~/.kiro
 	bin := provider.KiroExecutable()
 	if bin == "" {
 		bin = "kiro-cli"
 	}
-	out = append(out, &agent.Agent{ID: "kiro-cli", Name: "Kiro CLI", Icon: "kiro-color", Bin: bin})
-	return out
+	return []*agent.Agent{
+		{ID: "claude-desktop", Name: "Claude Desktop", Icon: "claude-color", Dir: dir, Path: filepath.Join(dir, "claude_desktop_config.json")},
+		{ID: "kiro-cli", Name: "Kiro CLI", Icon: "kiro-color", Bin: bin},
+	}
 }
 
 // Targets are the agents on this machine that magpie can give any of the
@@ -854,7 +839,7 @@ func targetsAsleep(gone bool) ([]*Target, []*agent.Agent) {
 	for _, a := range apps() {
 		own[a.ID] = true
 	}
-	for _, a := range agent.All() {
+	for _, a := range agent.Inventory() {
 		// the agents here, and a folder an agent shares with its vendor's
 		// other app when only that app is here: the Cursor editor reads
 		// ~/.cursor's mcp.json and skills with no cursor-agent installed
@@ -918,7 +903,7 @@ func (l *Library) held(have []*Target) []*Target {
 			slices.ContainsFunc(l.Hooks, func(h *Hook) bool { return slices.Contains(h.Agents, id) })
 	}
 	var out []*Target
-	for _, a := range append(apps(), agent.All()...) {
+	for _, a := range append(apps(), agent.Inventory()...) {
 		if in[a.ID] || a.WSL != "" || !has(a.ID) {
 			continue
 		}
@@ -1001,7 +986,7 @@ func Takes(q, kind string) (string, error) {
 	app := a != nil
 	if a == nil {
 		var err error
-		if a, err = agent.Find(q); err != nil {
+		if a, err = agent.FindIn(agent.Inventory(), q); err != nil {
 			return "", err
 		}
 	}

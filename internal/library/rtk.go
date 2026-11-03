@@ -793,7 +793,7 @@ func lastLines(s string, n int) string {
 // tests. Detecting them probes a file or a command for every agent magpie
 // knows of, which is a few hundred milliseconds, so it is asked once per read
 // and not once per pass over the list (see ReadRTK).
-var detected = agent.Detected
+var detected = agent.InventoryDetected
 
 // rtkAgents are the agents on this machine rtk can be given to. They are as
 // detected says, so a caller with a list already in hand passes it rather
@@ -1204,7 +1204,7 @@ func InstallRTK() (*RTKView, error) {
 
 // RTKTakes is the id of the agent q names when rtk can be given to it.
 func RTKTakes(q string) (string, error) {
-	a, err := agent.Find(q)
+	a, err := agent.FindIn(agent.Inventory(), q)
 	if err != nil {
 		return "", err
 	}

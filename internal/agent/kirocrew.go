@@ -202,15 +202,6 @@ var kiroCrewLeave = func() error {
 	return nil
 }
 
-// kiroCrewUserLeft forgets that magpie connected the agent id along with
-// Kiro Crew once the user disconnects it themselves: connected again
-// after, it is theirs, and Kiro Crew's Disconnect leaves it on.
-func kiroCrewUserLeft(id string) {
-	if j, ok := kiroCrewJoinedNow(); ok && j.Agent == id {
-		forget(kiroCrewJoinedKey)
-	}
-}
-
 // kiroCrewHasAdapter says whether Crew would find harness h's adapter; a
 // var so tests can say.
 var kiroCrewHasAdapter = func(h kiroCrewHarness) bool {

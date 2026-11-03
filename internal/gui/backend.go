@@ -7,11 +7,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/codexrelay"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/gateway"
+	"github.com/yetone/magpie/internal/library"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/usage"
 )
@@ -39,6 +39,14 @@ func stopServing() {
 // running from before an update, a magpie serve in a terminal), and the
 // model lists kept warm.
 func startBackend() (gw *gateway.Server) {
+	libraryStart.Do(func() {
+		go func() {
+			if _, err := library.Sync(); err != nil {
+				log.Println("library sync:", err)
+			}
+			library.KeepLinked(30 * time.Second)
+		}()
+	})
 	gateway.Window = true // the routing this process serves is shown on its page
 	gw = serveGateway()
 	go watchGateway(backendCtx, gatewayWatch)
@@ -49,12 +57,6 @@ func startBackend() (gw *gateway.Server) {
 		defer filememo.Hold()()
 		usage.ReadAhead()
 	}()
-	// Codex's background app-server, restarted when it has the list from
-	// before a change and no codex session is on it (luci)
-	go agent.KeepCodexDaemonCurrent(backendCtx)
-	// the compactions magpie made in Codex's threads written as Codex's
-	// own, so a thread goes on when Codex talks to OpenAI itself
-	go agent.KeepCodexRolloutsPortable(backendCtx)
 	// Model lists are fetched, never compiled in: whatever the agents can see
 	// comes from the models.dev catalog plus each vendor's own /models answer.
 	// Keep both halves warm without making the user click anything.
@@ -69,14 +71,13 @@ func startBackend() (gw *gateway.Server) {
 		// A signed-in agent's list exists only at the vendor; fill it in the
 		// first time so the picker never shows a stale snapshot.
 		provider.FetchNew(20 * time.Second)
-		// lists an older magpie wrote into agents' files, without what
-		// it has learnt since (context windows, providers added)
-		agent.SyncCatalog()
 		// and fetched again each day it stays open, for new models' prices
 		catalog.KeepFresh()
 	}()
 	return gw
 }
+
+var libraryStart sync.Once
 
 // gatewayWatch is how often a magpie without the gateway looks for it gone.
 const gatewayWatch = 15 * time.Second

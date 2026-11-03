@@ -627,7 +627,7 @@ func Detected() []*Agent {
 }
 
 // Find resolves a user-typed name (id, alias, or unique prefix).
-func Find(q string) (*Agent, error) { return FindIn(All(), q) }
+func Find(q string) (*Agent, error) { return FindIn(Inventory(), q) }
 
 // FindIn is Find among all, a list of All() the caller has built already.
 func FindIn(all []*Agent, q string) (*Agent, error) {

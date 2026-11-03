@@ -39,33 +39,9 @@ func init() {
 	sessions.WSLHomes = wslHomes
 	sessions.WSLRunning = WSLRunning
 	sessions.WSLOff = func() bool { return !wslLooks() }
-	// an agy conversation started on magpie's gateway is picked up again
-	// there, with the variables and --model it was started with
-	sessions.AgyStart = func() string {
-		home, _ := homes()
-		return agy(home).Launch()
-	}
 	// a Copilot CLI signed in inside a running distro (#723)
 	provider.CopilotWSLDirs = copilotWSLDirs
-	// the Codex app's app-server is restarted when magpie becomes Codex's
-	// provider for its used-up ChatGPT account, and when it stops being it;
-	// and when Codex is connected or disconnected, or its route otherwise
-	// changes, so a running app sends where its config now says
-	provider.CodexAppRoute = codexAppRoute
-	// but not when Codex's account is switched while its provider takes
-	// no ChatGPT account: the app-server goes by none
-	provider.CodexNoAccount = codexNoAccount
-	// and when none starts in place of the one ended, the app is
-	// reopened on Windows, where its stdout was held open
-	provider.CodexAppOpen = codexAppOpen
-	provider.CodexAppReopen = codexAppReopen
-	// and what the Codex app holds is read while Codex takes magpie's
-	// models beside its sign-in, Codex switched off in magpie or not
-	provider.CodexHoldMatters = func() bool {
-		home, _ := homes()
-		a := codex(home)
-		return a.HoldMatters != nil && a.HoldMatters()
-	}
+
 }
 
 // codexAppRoute is where Codex's config sends it, as the app-server reads
@@ -170,21 +146,53 @@ var others = []*Agent{
 // Routing views draw a request's client with.
 func Clients() []*Agent {
 	var out []*Agent
-	for _, a := range All() {
-		// a WSL agent's requests are its Windows twin's by their UA
-		if a.WSL == "" {
-			out = append(out, a)
-		}
+	home, cfg := homes()
+	for _, a := range onMachine(home, cfg) {
+		// Keep request attribution without exposing config writers, launch
+		// hooks or native integrations to callers of Clients.
+		out = append(out, &Agent{ID: a.ID, Name: a.Name, Icon: a.Icon, Aliases: a.Aliases, UA: a.UA})
 	}
 	return append(out, others...)
 }
 
-// All returns every agent magpie knows about, detected or not: its own,
-// then those plugins add.
+// All is empty: this fork serves an API gateway and does not manage other
+// programs' API configuration. Clients retains read-only request attribution.
+// Resource management uses Inventory; profiles and model synchronization
+// continue to see no writable agents here.
 func All() []*Agent {
+	return nil
+}
+
+// Inventory describes the agents the Library can give resources to. It uses
+// the existing registry and detection rules, exposing no model configuration
+// fields, launch commands or integration hooks.
+func Inventory() []*Agent {
 	home, cfg := homes()
 	own := builtins(home, cfg)
-	return append(own, pluggedAgents(home, own, nil)...)
+	all := append(own, pluggedAgents(home, own, nil)...)
+	out := make([]*Agent, 0, len(all))
+	for _, a := range all {
+		out = append(out, &Agent{
+			ID: a.ID, Name: a.Name, Icon: a.Icon, Aliases: a.Aliases,
+			Bin: a.Bin, Dir: a.Dir, Path: a.Path, Plugin: a.Plugin, UA: a.UA,
+			WSL: a.WSL, Home: a.Home, detect: a.detect, binNot: a.binNot,
+			dirShared: a.dirShared, shared: a.shared, pathOwn: a.pathOwn,
+			sign: a.sign, wslVersion: a.wslVersion, unreached: a.unreached,
+		})
+	}
+	return out
+}
+
+// InventoryDetected lists installed resource targets without enabling model
+// management through Detected.
+func InventoryDetected() []*Agent {
+	var out []*Agent
+	for _, a := range Inventory() {
+		if a.Detected() {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func homes() (home, cfg string) {
@@ -206,9 +214,7 @@ func builtins(home, cfg string) []*Agent {
 // too, and the moves came before WSL agents. A wsl.exe that hangs held each
 // command 20s, its two listings' timeouts.
 func local() []*Agent {
-	home, cfg := homes()
-	own := onMachine(home, cfg)
-	return append(own, pluggedAgents(home, own, nil)...)
+	return nil
 }
 
 // onMachine are builtins but those in WSL.

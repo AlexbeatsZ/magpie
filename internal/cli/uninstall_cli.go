@@ -62,7 +62,7 @@ func uninstallCmd(args []string) error {
 	remove, keep := uninstall.Folders()
 	if !yes {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return fmt.Errorf("this disconnects every agent and deletes magpie's settings, providers and usage; run it with --yes to do so without being asked")
+			return fmt.Errorf("this deletes magpie's settings, providers and usage; run it with --yes to do so without being asked")
 		}
 		fmt.Println("This takes magpie off this computer:")
 		if len(connected) > 0 {

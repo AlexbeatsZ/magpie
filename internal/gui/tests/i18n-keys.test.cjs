@@ -45,7 +45,7 @@ test("a plugin's words are its own", () => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       const p = path.join(d, e.name);
       if (e.isDirectory()) {
-        if (!["node_modules", ".git", "site", "tests", "testdata", "docs"].includes(e.name)) walk(p);
+        if (!["node_modules", ".git", "site", "tests", "testdata", "docs", "official-plugins"].includes(e.name)) walk(p);
       } else if (/\.(go|js|html|css)$/.test(e.name) && e.name !== "i18n.js") texts.push([p, fs.readFileSync(p, "utf8")]);
     }
   };

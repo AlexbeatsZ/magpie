@@ -7,6 +7,8 @@
   document.body.classList.add(mode);
   if (window.bootPrefs && window.bootPrefs.reduceMotion) window.holdStill(true);
   if (web) document.body.classList.add("web");
+  if (window.bootPrefs && window.bootPrefs.gatewayOnly) document.body.classList.add("gateway-only");
+  if (window.bootPrefs && window.bootPrefs.manualModels) document.body.classList.add("manual-models");
   // Preserve the existing iOS viewport policy before app.js runs.
   if (web && (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1))) {
     var viewport = document.querySelector('meta[name="viewport"]');

@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/settings"
@@ -105,8 +104,6 @@ func setPort(p int) (portJSON, error) {
 	if err := portFree(net.JoinHostPort(host, strconv.Itoa(want))); err != nil {
 		return portJSON{}, errPortTaken(want)
 	}
-	// the agents reaching the gateway where it is now, to move with it
-	on := agent.OnGateway()
 	cur.Port = p
 	if err := settings.Save(cur); err != nil {
 		return portJSON{}, err
@@ -122,11 +119,5 @@ func setPort(p int) (portJSON, error) {
 		// the port it was on was taken by something else: it serves now
 		serveGateway()
 	}
-	out := portJSON{Port: want}
-	moved, err := agent.Rewire(on)
-	out.Moved = moved
-	if err != nil {
-		out.Error = err.Error()
-	}
-	return out, nil
+	return portJSON{Port: want}, nil
 }

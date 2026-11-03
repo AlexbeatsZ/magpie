@@ -1161,7 +1161,6 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 	pluginRoutes(mux, w)
 	traceRoutes(mux)
 	contextRoutesAPI(mux)
-	tuneRoutes(mux)
 	groupRoutes(mux)
 	localHostsRoutes(mux)
 	// how each key's or account's requests stand under its limit on
@@ -2706,22 +2705,8 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		// and System Settings' Login Items, where Open at login is allowed
 		// again: that one pane, not System Settings' scheme at large
-		if strings.HasPrefix(in.URL, "https://") || strings.HasPrefix(in.URL, "http://") || strings.HasPrefix(in.URL, agent.CindyScheme) || strings.HasPrefix(in.URL, agent.LodyScheme) || strings.HasPrefix(in.URL, agent.AionUiScheme) || in.URL == autostart.LoginItemsURL {
-			open := w.OpenURL
-			// an app's import link is handed over only when something
-			// here opens it: the system says nothing when nothing does,
-			// and Add magpie did nothing at all (sungt, 10-29)
-			app := func(u string) error { return appLink(u, w.OpenURL) }
-			switch {
-			case strings.HasPrefix(in.URL, agent.LodyScheme):
-				// Lody on Linux is run with the link, which xdg-open
-				// turned away (agent.OpenLody)
-				open = func(u string) error { return agent.OpenLody(u, app) }
-			case strings.HasPrefix(in.URL, agent.CindyScheme), strings.HasPrefix(in.URL, agent.AionUiScheme):
-				open = app
-			}
-			// Open again on a sign-in says why it didn't open (#2043)
-			if err := open(in.URL); err != nil {
+		if strings.HasPrefix(in.URL, "https://") || strings.HasPrefix(in.URL, "http://") || in.URL == autostart.LoginItemsURL {
+			if err := w.OpenURL(in.URL); err != nil {
 				fail(rw, err)
 				return
 			}

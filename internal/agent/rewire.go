@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"context"
 	"fmt"
-	"strings"
 )
 
 // The gateway's port is set in Settings (Magic_zero on Discord): every
@@ -37,18 +35,7 @@ func OnGateway() []*Agent {
 // Claude Science's daemon, started for the old address, is drift
 // (scienceCheck) and is started again with the rest.
 func Rewire(as []*Agent) (moved []string, err error) {
-	var off []*Agent
-	for _, a := range as {
-		if d := a.Drift(); d != nil && d.Kind == "unwired" {
-			off = append(off, a)
-		}
-	}
-	moved, errs := setAgain(off)
-	KeepCursorLocalEnv(context.Background())
-	if trouble := dshWiredOnce(); trouble != "" {
-		errs = append(errs, fmt.Errorf("%s", trouble))
-	}
-	return moved, joinErrs(errs)
+	return nil, nil
 }
 
 // Rekey sets again those of as, taken by OnGateway before LAN sharing was
@@ -58,43 +45,7 @@ func Rewire(as []*Agent) (moved []string, err error) {
 // connected while nothing was shared kept gateway.Token, which the gateway
 // turns away from beyond loopback, after sharing was turned on for it.
 func Rekey(as []*Agent) (moved []string, err error) {
-	var away []*Agent
-	for _, a := range as {
-		if a.Gateway != nil && onAnotherMachine(a.Gateway()) {
-			away = append(away, a)
-		}
-	}
-	moved, errs := setAgain(away)
-	return moved, joinErrs(errs)
-}
-
-// setAgain sets each agent's wiring again, keeping what it had before
-// magpie, and says the names of those it set and what one failed with.
-func setAgain(as []*Agent) (moved []string, errs []error) {
-	for _, a := range as {
-		// set again on the old URL, an agent reads as not routed through
-		// magpie yet, and its set notes the old URL, magpie's token and
-		// model as what it had before magpie: what it really had is kept,
-		// for switching it off to put back
-		was := stashLoad()
-		e := reset(a)
-		// the address magpie wrote follows it (wiredAt)
-		for k, v := range stashLoad() {
-			if strings.HasSuffix(k, wiredAt) {
-				was[k] = v
-			}
-		}
-		stashPut(was)
-		if e != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", a.Name, e))
-			continue
-		}
-		if a.Sync != nil {
-			_ = a.Sync()
-		}
-		moved = append(moved, a.Name)
-	}
-	return moved, errs
+	return nil, nil
 }
 
 // joinErrs is errs as one error, "; " between them; nil for none.
@@ -108,28 +59,6 @@ func joinErrs(errs []error) (err error) {
 	return err
 }
 
-// reset sets an agent's wiring again: one joined beside its own models
-// joined again, any other's fields set again.
-func reset(a *Agent) error {
-	if a.Native != nil {
-		return a.Native.Connect()
-	}
-	if a.Join != nil && a.Joined != nil && a.Joined() {
-		ok, err := a.Join()
-		if err != nil || ok {
-			return err
-		}
-	}
-	return a.Reapply()
-}
-
 // wiredAt ends a stash key holding the gateway address magpie last wrote
 // into an agent's config, which a move of the gateway updates.
 const wiredAt = ".wired_at"
-
-// stashPut writes the stash as m has it.
-func stashPut(m map[string]string) {
-	stashMu.Lock()
-	defer stashMu.Unlock()
-	stashWrite(m)
-}

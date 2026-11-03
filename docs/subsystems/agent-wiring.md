@@ -1,5 +1,21 @@
 # Agent wiring
 
+> **Model wiring removed in this fork (AlexbeatsZ/magpie, 2026-11).**
+> Model, endpoint and credential configuration remains manual.
+> `All`, `Detected` and `local` are empty,
+> `Apply`, `Pick`, `Connect`, `Reapply`, `Disconnect`, `TuneApply` and
+> `TuneUndo` return `ErrWiringRemoved` (`removed.go`), and
+> `SyncCatalog`, `Reseat`, `Rewire` and `Rekey` change nothing outside
+> magpie. `Clients` keeps the read-only id, name, icon and UA the gateway
+> attributes requests by. `Inventory` and `InventoryDetected` reuse the
+> registry and detection rules but expose no model fields or integration
+> hooks; `Find` resolves those read-only entries. The Agents page offers
+> Library and Sessions, and the Library writes resources through its own
+> existing adapters. The remaining model-wiring descriptions below are
+> upstream reference, not available product actions. Guard tests:
+> `gateway_only_test.go` in `internal/agent`, `internal/cli`,
+> `internal/gui`, `internal/tui`, `internal/update`.
+
 magpie connects a coding agent to its gateway by editing the agent's own
 config. That covers the endpoint, the key `magpie-<agent>` and the model,
 in the agent's own format. When the agent is disconnected, magpie puts back

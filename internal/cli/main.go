@@ -28,7 +28,6 @@ import (
 	"github.com/yetone/magpie/internal/notices"
 	"github.com/yetone/magpie/internal/pluginrt"
 	"github.com/yetone/magpie/internal/proc"
-	"github.com/yetone/magpie/internal/profile"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/sessions"
 	"github.com/yetone/magpie/internal/settings"
@@ -40,7 +39,7 @@ import (
 // (-ldflags "-X main.version=…") and handed over by Main.
 var version = "dev"
 
-const usage = `magpie — one place to pick every agent's model
+const usage = `magpie — local API gateway, providers and model routing
 
   magpie                          open the app: a window plus a menu bar icon
   magpie tray                     start in the menu bar only
@@ -51,30 +50,17 @@ const usage = `magpie — one place to pick every agent's model
                                   the app's window in a browser, with the gateway (no desktop needed: WSL, a server over SSH)
                                   a new key each run; MAGPIE_WEB_KEY (16+ letters, digits, - . _ ~) keeps one, signed in for 400 days
                                   behind a reverse proxy, MAGPIE_WEB_URL=https://<the page there> prints the link through it
-                                  --gateway: gateway mode, no Agents, Sessions or Library (on by itself with no agents here; Settings › General turns it off)
+                                  --gateway: hide local Agent and Library management; Sessions remains available
                                   --tls-cert/--tls-key: the page and the gateway over https:// to other computers
-  magpie ls                       list detected agents and their settings
-  magpie <agent>                  show one agent
-  magpie <agent> <model>          set an agent's model   e.g. magpie claude deepseek/deepseek-chat
-  magpie <agent> <field>          show one field   e.g. magpie codex effort
-  magpie <agent> <field> <value>  set another field   e.g. magpie codex effort high
-  magpie <agent> default          take magpie out: the agent back on what it had before
-  magpie <agent> <field> default  that field back to the agent's own default
-  magpie <command> --help         what a command or an agent takes; -h or --help anywhere does nothing else
-
-  magpie save <name>              snapshot every agent's settings as a profile
-  magpie use <name>               apply a profile
-  magpie profiles                 list profiles
-  magpie rm <name>                delete a profile
+  magpie <command> --help         what a command takes; -h or --help anywhere does nothing else
+  magpie library                  manage instructions, MCP servers and skills (model setup stays manual)
 
   magpie backup [--no-keys] [--no-library] [file]    providers, keys, settings, profiles, agent models and the library in one file, sealed with a passphrase
   magpie restore [--no-agents] [--no-library] <file> put a backup in on this machine
-  magpie uninstall [--yes]                           disconnect every agent, putting back what each had, then remove magpie's service and files
+  magpie uninstall [--yes]                           remove magpie's service and files
   magpie webdav [on <address>|set k=v…|now|off]      the same, kept the same on every computer through a WebDAV folder (magpie webdav help)
   magpie s3 [on s3://<bucket>[/<prefix>]|set k=v…|now|off]   the same through an S3-compatible bucket: AWS, R2, B2, MinIO… (magpie s3 help)
   magpie github [on github://<owner>/<repo>[/<folder>]|set k=v…|now|off]   the same in an encrypted GitHub repository (magpie github help)
-
-  magpie library [sync|instructions|mcp|skill]   the instructions, MCP servers and skills written into every agent (magpie library help)
 
   magpie providers                list your providers: host, key, models, who uses them
   magpie presets                  the vendors magpie knows: add one with just a key
@@ -86,9 +72,6 @@ const usage = `magpie — one place to pick every agent's model
   magpie models [<agent>]         every model agents can pick, as provider/model; an agent's, and why others aren't
   magpie model name <provider/model> <name>|--reset       the name a model goes by, everywhere
   magpie model efforts <provider/model> <l>,<l>|--reset   the reasoning levels a model offers (magpie model help)
-  magpie visible [<agent> <family|provider|group>,… | all | --only-picked | --show-new]
-                                  which models an agent is shown: families (magpie provider/group set <id> family=…),
-                                  or only the models ticked for it, a new one off until it is ticked
   magpie search [add <api> <key>|rm <api>]   Tavily, Brave, Exa, Firecrawl, You.com, DeepSeek, Doubao Search (Volcengine), Yuanbao Search (Tencent Cloud) or SearXNG for web search when no provider can search
   magpie groups                   routing groups: several models agents pick as one, group/<id>
   magpie group add <name> models=<m1>,<m2> [routing=smart|order|rotate|usage|pace|weight|free|fast|cheap|drain] [stays=auto|session|turn|off]
@@ -153,7 +136,6 @@ const usage = `magpie — one place to pick every agent's model
                                   each window's readings over time, kept 45 days
   magpie statusline [<provider|account>]   one line for Claude Code's status line: the session's model and each account's windows
   magpie sync                     refresh the model catalog and vendor model lists
-  magpie agents                   list every supported agent
   magpie settings [list|get <key>|set <key> <value>|reset <key>] [--json]
                                   every setting the window's Settings page saves, read and set as it saves them (magpie settings help)
   magpie update [check] [--proxy <url>] [--mirror <prefix>]
@@ -168,7 +150,6 @@ const usage = `magpie — one place to pick every agent's model
                                   it downloads one at once or only says it is out (notify: for metered networks)
   magpie licenses                 the third-party notices of what magpie is built with
 
-agents: claude (cc), codex, gemini, opencode (oc), mimocode, deveco, pi, goose, cursor, zed, copilot, crush, aside
 `
 
 var (
@@ -246,7 +227,7 @@ var tuiRun = tui.Run
 // in files of their own are brought up to date behind the save, which
 // answers without waiting for every agent's files to be written (on
 // Windows, half a second for each one another program holds open).
-func syncAgentsOnChange() { catalog.Changed = agent.SyncCatalogSoon }
+func syncAgentsOnChange() { catalog.Changed = nil }
 
 // startUp brings the files magpie and its agents keep up to what this
 // magpie reads, before a command that may read them; a var so a test can
@@ -269,14 +250,7 @@ var startUp = func() {
 	if _, err := provider.FoldCopies(); err != nil {
 		fmt.Fprintf(os.Stderr, "magpie: providers.json: %v\n", err)
 	}
-	// the providers and settings read once for every agent's fields, which
-	// the moves below look at (a write among them reads them again)
-	release := provider.Hold()
-	agent.RenameLegacy()
-	agent.MoveCursorEfforts()
-	agent.MoveAntigravityEfforts()
-	agent.MoveOffAccountIDs()
-	release()
+
 }
 
 func run(args []string) error {
@@ -288,11 +262,6 @@ func run(args []string) error {
 		agent.SyncCatalogSettled()
 		catalog.Changed = was
 	}()
-	// what a shell's agy runs (agy_cli.go): every argument after run is
-	// agy's, --help too, and nothing is moved or started first
-	if ok, err := agyCmd(args); ok {
-		return err
-	}
 	// before anything is read, moved or started: --help on any command
 	// prints its usage and does nothing else
 	if helpAsked(args) {
@@ -318,12 +287,6 @@ func run(args []string) error {
 		// where magpie's logs are, and the app log's last lines: reads
 		// files, and moves nothing
 		return logCmd(args[1:])
-	}
-	if len(args) == 2 && args[0] == agent.DryRunArg {
-		// an agent disconnected on a copy of its files under a temporary
-		// home, for the Agents page to show what disconnecting changes
-		// (agent.DisconnectPreview)
-		return agent.DryRun(args[1])
 	}
 	if len(args) > 1 && (args[0] == "accounts" || args[0] == "account") && args[1] == "discovery" {
 		return accountsDiscoveryCmd(args[2:])
@@ -375,40 +338,8 @@ func run(args []string) error {
 	// the model lists agents keep in files of their own, behind the save
 	// that changed it (agent.SyncCatalogSoon)
 	syncAgentsOnChange()
-	// a model Claude Code names that magpie doesn't serve goes to the one
-	// it is set to use for that tier
-	gateway.StandIn = agent.StandIn
-	// and its auto mode classifier, on a sonnet tier that follows a main
-	// model /model has moved, to the model it moved to
-	gateway.ClassifierStandIn = agent.ClassifierStandIn
-	// a Codex that reaches magpie for account failover alone is handed
-	// only its own models (#1385)
-	gateway.CodexOwnOnly = agent.CodexOwnOnly
-	// what magpie writes into an agent's TOML, YAML or dotenv config says
-	// so in a comment, for whoever reads it once magpie is gone
-	agent.MarkWritten()
-	// the Codex app's titles, descriptions and summaries, which it asks
-	// for on a model of its own, on the model of magpie's picked beside
-	// its ChatGPT sign-in rather than on that account (atom_Ray on X)
-	gateway.CodexSideModel = agent.CodexSideModel
-	gateway.CodexSideSet = agent.CodexSideSet
-	// the list the Codex app reads from a file beside the ChatGPT sign-in,
-	// its picker showing magpie's models only so (laddieyao on Discord),
-	// written again when the backend's list changes
-	agent.CodexDesktopList = gateway.CodexDesktopCatalog
-	gateway.CodexDesktopChanged = agent.SyncCatalogSoon
 	// the setup kept the same on every computer, by whichever serves
 	gateway.WhileServing = append(gateway.WhileServing, davsync.Run)
-	// and dsh's patch lists, which dsh reads live: a route left behind by
-	// something else writing the file fails every session there until
-	// magpie writes its own list again
-	gateway.WhileServing = append(gateway.WhileServing, agent.KeepDshWired)
-	// and Cursor Private Inference's variables, which the Mac's launchd
-	// forgets at a restart, for the gateway's address now
-	gateway.WhileServing = append(gateway.WhileServing, agent.KeepCursorLocalEnv)
-	// and Claude Science's daemon, which a restart of the computer ends,
-	// started on the gateway again while it is connected
-	gateway.WhileServing = append(gateway.WhileServing, agent.KeepClaudeScience)
 	// and the Claude Code magpie downloaded for a machine with none (a
 	// server's, a container's), at Claude Code's newest release: its runs
 	// turn its own updater off
@@ -477,12 +408,6 @@ func run(args []string) error {
 	case "licenses":
 		fmt.Print(notices.Text)
 		return nil
-	case "ls", "list":
-		// in the order the app lists them; those hidden there come last, dimmed
-		shown, hidden := settings.Arrange(settings.Load(), agent.Detected(), func(a *agent.Agent) string { return a.ID })
-		return list(append(shown, hidden...), true, len(shown))
-	case "agents":
-		return list(agent.All(), false, -1)
 	case "sync":
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -492,8 +417,6 @@ func run(args []string) error {
 		fmt.Println(green.Render("✓"), "catalog saved to", catalog.CachePath())
 		refreshLive(ctx)
 		return nil
-	case "save", "use", "rm", "profiles":
-		return profiles(args)
 	case "import":
 		return importCmd(args[1:])
 	case "providers":
@@ -506,8 +429,6 @@ func run(args []string) error {
 		return models(args[1:])
 	case "model":
 		return modelCmd(args[1:])
-	case "visible":
-		return visibleCmd(args[1:])
 	case "search":
 		return searchCmd(args[1:])
 	case "groups":
@@ -524,12 +445,12 @@ func run(args []string) error {
 		return usageCmd(args)
 	case "sessions":
 		return sessionsCmd(args)
+	case "library":
+		return libraryCmd(args)
 	case "quota", "quotas":
 		return quotaCmd(args)
 	case "update":
 		return updateCmd(args)
-	case "library", "lib":
-		return libraryCmd(args)
 	case "backup":
 		return backupCmd(args[1:])
 	case "restore":
@@ -550,78 +471,7 @@ func run(args []string) error {
 		return settingsCmd(args[1:])
 	}
 
-	// the agent of a plugin that is gone (deleted on disk) is no agent
-	// here, but what magpie stashed of its file puts it back (#3810)
-	if len(args) == 2 && strings.EqualFold(args[1], "default") {
-		if g, ok, err := agent.RestoreGone(args[0]); ok {
-			return goneDefault(args[0], g, err)
-		}
-	}
-	a, err := agent.Find(args[0])
-	if err != nil {
-		return err
-	}
-	// no agent form takes a flag: one is never set as a model or a value
-	// (`magpie snow --verbose` would take magpie out of Snow, #1457)
-	if f := flagArg(args[1:]); f != "" {
-		return fmt.Errorf("unknown flag %s: nothing was changed\n\n%s", f, strings.TrimRight(agentHelp(a), "\n"))
-	}
-	if len(a.Fields) == 0 && a.Import != nil {
-		// `magpie cindy`: it takes magpie through its own link, confirmed there
-		if len(args) > 1 {
-			link := a.Import()
-			if link == "" {
-				// Lody takes only a gateway on this computer's loopback
-				return fmt.Errorf("%s takes magpie only at a loopback address, and the gateway is at %s: nothing was opened", a.Name, gateway.URL())
-			}
-			// handed over only when something here opens it, or nothing
-			// opens and nothing says so (sungt, 10-29)
-			openApp := func(u string) error { return appLink(u, func(u string) error { openInBrowser(u); return nil }) }
-			handOver := openApp
-			if a.ID == "lody" {
-				// Lody on Linux is run with the link (agent.OpenLody)
-				handOver = func(u string) error { return agent.OpenLody(u, openApp) }
-			}
-			if err := handOver(link); err != nil {
-				return fmt.Errorf("%w. Open %s once or install it again, then run this again", err, a.Name)
-			}
-			fmt.Println(green.Render("✓"), bold.Render(a.Name), muted.Render("opened to add magpie — confirm it there"))
-			fmt.Println(muted.Render("  " + link))
-			return nil
-		}
-	}
-	switch len(args) {
-	case 1:
-		return list([]*agent.Agent{a}, true, -1)
-	case 2:
-		// default is magpie's word in any case, as an agent's name and a
-		// field's are: magpie codex DEFAULT wrote model = "DEFAULT"
-		if strings.EqualFold(args[1], "default") {
-			if a.Wired() {
-				return disconnect(a)
-			}
-			return set(a, a.Fields[0].Key, "")
-		}
-		// `magpie codex model`: a field's name alone asks what it is set to,
-		// where it was set as the model (model = "model"). Claude Code's
-		// opus is a model's name as well as a tier's, and stays the model
-		if f := a.Field(args[1]); f != nil && !modelAlias(a, args[1]) {
-			return showField(a, f)
-		}
-		// `magpie codex xhigh`: a bare value that belongs to a non-model field
-		// (effort levels, for instance) is routed there; anything else is a model.
-		if f := fieldForValue(a, args[1]); f != nil {
-			return set(a, f.Key, args[1])
-		}
-		return set(a, a.Fields[0].Key, args[1])
-	case 3:
-		value := args[2]
-		if strings.EqualFold(value, "default") {
-			value = ""
-		}
-		return set(a, args[1], value)
-	}
-	return fmt.Errorf("too many arguments\n\n%s", usage)
+	return fmt.Errorf("unknown command %q; run magpie help for gateway commands", args[0])
 }
 
 func set(a *agent.Agent, key, value string) error {
@@ -702,68 +552,6 @@ func fieldAsValue(a *agent.Agent, f, g *agent.Field, value string) error {
 	return fmt.Errorf("%q is a field of %s's, not a value for its %s: magpie %s %s shows it", value, a.Name, f.Label, a.ID, g.Key)
 }
 
-// showField is `magpie <agent> <field>`: what the field is set to, as set
-// prints it
-func showField(a *agent.Agent, f *agent.Field) error {
-	v := f.Get()
-	if v == "" {
-		v = muted.Render("default")
-	}
-	fmt.Println(bold.Render(a.Name), muted.Render(f.Label), v)
-	return nil
-}
-
-// disconnect is `magpie <agent> default` on an agent magpie is wired into:
-// the Agents page's Disconnect, which puts back what the user had before
-// magpie — Claude Code's own model, its endpoint — where a field's default
-// leaves the agent as installed (__jingling on X: magpie claude default
-// took the model they had set away with magpie's)
-func disconnect(a *agent.Agent) error {
-	before := a.Values()
-	if err := a.Disconnect(); err != nil {
-		return err
-	}
-	now := a.Values()
-	for _, f := range a.Fields {
-		if before[f.Key] == now[f.Key] {
-			continue
-		}
-		shown := now[f.Key]
-		if shown == "" {
-			shown = muted.Render("default")
-		}
-		fmt.Println(green.Render("✓"), bold.Render(a.Name), muted.Render(f.Label), shown)
-	}
-	fmt.Println(muted.Render("  disconnected from magpie, back to what it had before"))
-	if a.Notice != nil {
-		if n := a.Notice(); n != "" {
-			fmt.Println(muted.Render("  ↻ " + n))
-		}
-	}
-	return nil
-}
-
-// goneDefault says what `magpie <id> default` did for the agent of a
-// plugin that is gone.
-func goneDefault(id string, g agent.Gone, err error) error {
-	for _, p := range g.Put {
-		fmt.Println(green.Render("✓"), bold.Render(id), muted.Render(p))
-	}
-	for _, p := range g.Off {
-		fmt.Println(green.Render("✓"), bold.Render(id), muted.Render(p+": magpie was out of it already"))
-	}
-	if len(g.Put) > 0 {
-		fmt.Println(muted.Render("  its plugin is gone; disconnected from magpie, back to what it had before"))
-	}
-	if g.PluginOff != "" {
-		fmt.Println(green.Render("✓"), bold.Render(g.PluginOff), muted.Render("is not on magpie: its plugin is off, and magpie put back what it had when the plugin was turned off"))
-	}
-	if err != nil {
-		return fmt.Errorf("%s's plugin is gone, and magpie couldn't put its config back: %w", id, err)
-	}
-	return nil
-}
-
 func fieldForValue(a *agent.Agent, v string) *agent.Field {
 	vals := a.Values()
 	// the agent's suffix after a model (omp's ":max") aside: a role on the
@@ -793,159 +581,11 @@ func fieldForValue(a *agent.Agent, v string) *agent.Field {
 	return nil
 }
 
-// list prints the agents; those from dimFrom on (when not -1) are the ones
-// hidden in the app, and are dimmed.
-func list(agents []*agent.Agent, detectedOnly bool, dimFrom int) error {
-	if len(agents) == 0 {
-		return fmt.Errorf("no supported agents found on this machine")
-	}
-	type row struct{ name, vals, path string }
-	var rows []row
-	nameW, valW := 0, 0
-	for i, a := range agents {
-		r := row{name: a.Name, path: tilde(a.Path)}
-		if !detectedOnly && !a.Detected() {
-			r.name = faint.Render(a.Name)
-			r.vals = faint.Render("not detected")
-			r.path = ""
-		} else if a.CLIMissing() {
-			// its folder left by an uninstall (#2173): what it holds is
-			// read by nothing
-			r.name = faint.Render(a.Name)
-			r.vals = faint.Render("CLI not found")
-		} else {
-			vals := a.Values()
-			dim := dimFrom >= 0 && i >= dimFrom
-			label, value := muted, lipgloss.NewStyle()
-			if dim {
-				label, value = faint, faint
-			}
-			var parts []string
-			for _, f := range a.Fields {
-				v := vals[f.Key]
-				if v == "" && f.Quiet {
-					continue
-				}
-				if v == "" {
-					v = faint.Render("—")
-				} else {
-					v = value.Render(v)
-				}
-				if f.Label == "model" {
-					parts = append(parts, v)
-				} else {
-					parts = append(parts, label.Render(f.Label)+" "+v)
-				}
-			}
-			r.name = bold.Render(a.Name)
-			if dim {
-				r.name = faint.Render(a.Name) + " " + faint.Render("hidden")
-			}
-			r.vals = strings.Join(parts, label.Render("  ·  "))
-			// through magpie for account failover while not connected (#1385)
-			if said := a.FailoverSaid(); said != "" {
-				r.vals += label.Render("  ·  " + said)
-			}
-			if a.Import != nil {
-				// unknown reads as not added here: the line only offers the
-				// command, never says magpie is missing
-				added := false
-				if a.Added != nil {
-					added, _ = a.Added()
-				}
-				if added {
-					r.vals = value.Render("magpie added")
-				} else {
-					r.vals = label.Render("magpie "+a.ID+" add") + faint.Render("  to add magpie")
-				}
-			}
-		}
-		nameW = max(nameW, lipgloss.Width(r.name))
-		valW = max(valW, lipgloss.Width(r.vals))
-		rows = append(rows, r)
-	}
-	for _, r := range rows {
-		fmt.Printf("  %s  %s  %s\n", pad(r.name, nameW), pad(r.vals, valW), faint.Render(r.path))
-	}
-	return nil
-}
-
 func tilde(p string) string {
 	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(p, home) {
 		return "~" + p[len(home):]
 	}
 	return p
-}
-
-func profiles(args []string) error {
-	switch args[0] {
-	case "profiles":
-		ps, err := profile.Load()
-		if err != nil {
-			return err
-		}
-		if len(ps) == 0 {
-			fmt.Println(muted.Render("no profiles yet · magpie save <name>"))
-			return nil
-		}
-		detected := agent.Detected()
-		for _, n := range profile.Names(ps) {
-			// ✓ the one the setup is now (superhtoooth on X)
-			mark := " "
-			if profile.InUse(ps[n], detected, nil) {
-				mark = green.Render("✓")
-			}
-			fmt.Printf("%s %s  %s\n", mark, bold.Render(n), muted.Render(profile.LongSummary(ps[n])))
-		}
-		return nil
-	case "save":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: magpie save <name>")
-		}
-		p, err := profile.Snapshot()
-		if err != nil {
-			return err
-		}
-		if err := profile.Save(args[1], p); err != nil {
-			return err
-		}
-		fmt.Println(green.Render("✓"), "saved profile", bold.Render(args[1]))
-		if p.Library != nil {
-			fmt.Println(" ", muted.Render("with the "+p.Library.Summary()))
-		}
-		return nil
-	case "use":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: magpie use <name>")
-		}
-		ps, err := profile.Load()
-		if err != nil {
-			return err
-		}
-		p, ok := ps[args[1]]
-		if !ok {
-			return fmt.Errorf("no profile named %q", args[1])
-		}
-		a, err := profile.Apply(p)
-		if err != nil {
-			return err
-		}
-		fmt.Println(green.Render("✓"), "applied", bold.Render(args[1]), muted.Render(fmt.Sprintf("(%d changed)", a.Changed)))
-		for _, line := range profile.Report(a) {
-			fmt.Println(" ", muted.Render(line))
-		}
-		return nil
-	case "rm":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: magpie rm <name>")
-		}
-		if err := profile.Delete(args[1]); err != nil {
-			return err
-		}
-		fmt.Println(green.Render("✓"), "deleted profile", bold.Render(args[1]))
-		return nil
-	}
-	return nil
 }
 
 func pad(s string, w int) string {

@@ -24,6 +24,11 @@ var lastProblems struct {
 	p []library.Problem
 }
 
+type mcpSignInOpened struct {
+	mcpauth.State
+	OpenError string `json:"openError,omitempty"`
+}
+
 type libraryJSON struct {
 	*library.View
 	Result *library.Result `json:"result,omitempty"`

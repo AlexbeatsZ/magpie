@@ -220,9 +220,18 @@ magpie.plugin("sessions", (ctx) => {
     searchCtl?.abort();
     searchCtl = null;
     const mine = found = { agent: data.agent, needle, hits: new Map(), busy: true };
+    const reference = query.trim();
+    mine.reference = /^(?:\[session )?[a-z][a-z0-9-]*:[a-z][a-z0-9-]*:[A-Za-z0-9][A-Za-z0-9._-]{3,127}\]?$/.test(reference);
     searchT = setTimeout(async () => {
       const ctl = searchCtl = new AbortController();
       try {
+        if (mine.reference) {
+          const s = await api("sessions/one?key=" + encodeURIComponent(reference), undefined, undefined, ctl.signal);
+          if (found !== mine || ctl.signal.aborted) return;
+          if (searchCtl === ctl) searchCtl = null;
+          reveal(s);
+          return;
+        }
         const r = await api(`sessions/search?agent=${encodeURIComponent(mine.agent)}&q=${encodeURIComponent(needle)}`, undefined, undefined, ctl.signal);
         if (found !== mine) return;
         found = { ...mine, busy: false, hits: new Map((r?.hits || []).map((h) => [h.id, h])), cut: !!r?.cut, unread: !!r?.unread, searched: r?.searched || 0, total: r?.total || 0 };
@@ -241,8 +250,8 @@ magpie.plugin("sessions", (ctx) => {
     const f = search();
     if (!f) return null;
     let text = "";
-    if (f.busy) text = t("Searching what was said…");
-    else if (f.error) text = t("Couldn't search what was said: {error}", { error: f.error });
+    if (f.busy) text = t(f.reference ? "Finding session…" : "Searching what was said…");
+    else if (f.error) text = t(f.reference ? "Couldn't find session: {error}" : "Couldn't search what was said: {error}", { error: f.error });
     else if (f.unread) text = t("{agent}'s own files of its sessions can't be read here, so only what magpie recorded through the gateway is searched.", { agent: current()?.name || f.agent });
     else if (f.cut) text = t("Searched what was said in the latest {n} of {total} sessions.", { n: f.searched, total: f.total });
     if (!text) return null;
@@ -1147,6 +1156,7 @@ magpie.plugin("sessions", (ctx) => {
     if (s.wsl) line("WSL", s.wsl);
     if (s.cwd) line(t("Folder"), s.cwd);
     line(t("Session ID"), s.id, copyBtn(s.id, t("Session id")));
+    if (s.reference) line(t("Session reference"), s.reference, copyBtn(s.reference, t("Session reference")));
     if (s.resume) line(t("Resume"), el("code", "", s.resume), copyBtn(s.resume, t("Resume command")));
     for (const c of s.carry || []) {
       const agent = agentOf(c.agent).name;

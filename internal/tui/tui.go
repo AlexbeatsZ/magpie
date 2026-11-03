@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -159,9 +160,6 @@ func Run(ready func()) error {
 	if ready != nil {
 		ready()
 	}
-	if len(m.agents) == 0 {
-		return fmt.Errorf("no supported agents found on this machine")
-	}
 	ctx, stop := context.WithCancel(context.Background())
 	wait := serveGateway(ctx)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
@@ -187,7 +185,7 @@ func newModel() model {
 	}
 	s := settings.Load()
 	shown, hidden := settings.Arrange(s, set, func(a *agent.Agent) string { return a.ID })
-	m := model{agents: append(shown, hidden...), hidden: len(shown), period: usage.Week, srange: 1, qleft: s.QuotaLeft}
+	m := model{page: pageProviders, agents: append(shown, hidden...), hidden: len(shown), period: usage.Week, srange: 1, qleft: s.QuotaLeft}
 	// no model catalog yet: Init syncs it. Set here, as Init's receiver is
 	// a copy the program never sees.
 	m.syncing = catalog.Source() == ""
@@ -224,6 +222,9 @@ func (m *model) reload() {
 
 // goTo shows a page, as it is now.
 func (m *model) goTo(p page) tea.Cmd {
+	if p == pageAgents {
+		p = pageProviders
+	}
 	m.page, m.mode, m.confirm = p, modeList, ""
 	m.reload()
 	if p == pageProviders && !m.asked {
@@ -418,14 +419,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // pageKey is the page a key goes to: 1–6, or ] and [ for the next and
 // the one before.
 func (m model) pageKey(k string) (page, bool) {
-	n := page(len(pageNames))
+	pages := []page{pageProviders, pageGroups, pageUsage, pageSessions, pageLibrary}
+	index := slices.Index(pages, m.page)
+	if index < 0 {
+		index = 0
+	}
 	switch k {
-	case "1", "2", "3", "4", "5", "6":
-		return page(k[0] - '1'), true
+	case "1", "2", "3", "4", "5":
+		return pages[k[0]-'1'], true
 	case "]":
-		return (m.page + 1) % n, true
+		return pages[(index+1)%len(pages)], true
 	case "[":
-		return (m.page + n - 1) % n, true
+		return pages[(index+len(pages)-1)%len(pages)], true
 	}
 	return 0, false
 }
@@ -829,9 +834,9 @@ func (m model) header(crumbs ...string) string {
 	if len(crumbs) == 0 {
 		// the pages, this one marked
 		s += "  "
-		for i, n := range pageNames {
-			label := fmt.Sprintf("%d %s", i+1, n)
-			if page(i) == m.page {
+		for i, p := range []page{pageProviders, pageGroups, pageUsage, pageSessions, pageLibrary} {
+			label := fmt.Sprintf("%d %s", i+1, pageNames[p])
+			if p == m.page {
 				s += sPill.Render(label) + " "
 			} else {
 				s += sMuted.Render(" "+label+" ") + " "
